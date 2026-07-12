@@ -1,0 +1,34 @@
+# ===== 密钥与登录态（泄漏=账号失守）=====
+config/config.toml
+config/storage_state*.json
+data/sessions/
+.claude/settings.local.json
+
+# ===== 个人数据（简历/画像/采集/标注/报告），绝不入库 =====
+config/profile.md
+resume/*
+!resume/.gitkeep
+reports/*
+!reports/.gitkeep
+skills/.claude/
+data/jobcopilot.db
+data/raw/*
+data/clean/*
+data/exports/*
+data/eval/
+data/jd/
+data/imports/
+!data/**/.gitkeep
+
+# ===== 本地向量模型（143MB，跑 tools/download-model.sh 获取）=====
+data/models/
+
+# ===== Python =====
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+
+# ===== 系统 =====
+.DS_Store

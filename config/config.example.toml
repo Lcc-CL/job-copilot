@@ -1,0 +1,31 @@
+# 复制为 config.toml 后填写。config.toml 不入库（见 .gitignore）。
+
+[llm]
+# DeepSeek API（OpenAI 兼容接口），从 https://platform.deepseek.com 获取
+provider = "deepseek"
+api_key = "sk-xxxxx"
+base_url = "https://api.deepseek.com"
+model_analysis = "deepseek-v4-pro"     # 深度分析
+model_drafting = "deepseek-v4-flash"   # 高频文案
+
+[me]
+# 你的求职意向（还没定位也没关系，先写几个"可能感兴趣"的）
+keywords = ["数据分析师", "产品经理"]     # 意向关键词/岗位
+cities = ["上海", "杭州"]                  # 目标城市
+salary_expect_min = 20000                  # 期望月薪下限（元）
+salary_expect_max = 35000                  # 期望月薪上限（元）
+experience_years = 3                        # 你的工作年限
+
+[collect]
+platforms = ["boss", "zhilian", "liepin"]  # 采集平台，按可行性/常用度排序
+daily_limit = 300                          # 单日采集上限（保护账号）
+min_interval_sec = 3                        # 请求最小间隔（节流）
+max_interval_sec = 8                        # 请求最大间隔（随机化，模拟人工）
+
+[apply]
+daily_apply_limit = 50                      # 单日投递上限（远低于平台风控线）
+require_confirm = true                      # 每次投递前是否需要你确认（强烈建议 true）
+
+[experiment]
+# 分组对照投递的分组定义（竞争力实证）
+groups = ["本行平级", "高一档", "换行目标", "其它"]

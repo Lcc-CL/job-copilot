@@ -1,0 +1,10 @@
+# 核心
+pandas>=2.2
+openpyxl>=3.1          # Excel 导出
+playwright>=1.44       # 浏览器自动化（带登录态采集/投递）
+openai>=1.40           # DeepSeek API（OpenAI兼容；招呼语/简历改写/HR回复/面试卡）
+tomli>=2.0 ; python_version < "3.11"
+
+# 工具
+rich>=13.0             # 命令行漂亮输出
+python-dateutil>=2.9
