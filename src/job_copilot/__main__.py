@@ -29,6 +29,7 @@ COMMANDS = [
     ("evalset",   "P1", "生成评测集标注表（分层抽样，供人工标注该投/不投）"),
     ("eval",      "P1", "评测：用标注算 precision@k，对比粗筛vs精排"),
     ("score",     "P1", "LLM 精排：对粗筛候选做 Block A-G 评估"),
+    ("enrich",    "P1", "补采 Top N 岗位 JD 详情 + 二次精排（--fetch --rescore）"),
     ("greet",     "P2", "为'感兴趣'岗位生成定制招呼语"),
     ("apply",     "P2", "半自动投递（每条需确认）"),
     ("inbox",     "P3", "回读HR消息，起草回复，收集邀约"),
@@ -37,7 +38,7 @@ COMMANDS = [
     ("decide",    "P3", "生成个人求职决策报告"),
 ]
 
-IMPLEMENTED = {"status", "collect", "clean", "market", "skills", "match", "dashboard", "evalset", "score", "eval", "greet", "stats"}
+IMPLEMENTED = {"status", "collect", "clean", "market", "skills", "match", "dashboard", "evalset", "score", "enrich", "eval", "greet", "stats"}
 
 
 def cmd_status() -> None:
@@ -100,6 +101,19 @@ def main() -> None:
             p_skills = sub.add_parser(name, help=desc)
             p_skills.add_argument("--jobs", help="清洗后岗位CSV路径（默认 data/clean/cleaned_jobs.csv）")
             p_skills.add_argument("--profile", help="简历/profile路径（默认 resume/母版简历.md）")
+        elif name == "enrich":
+            p_enrich = sub.add_parser(name, help=desc)
+            p_enrich.add_argument("--top", type=int, default=30, help="选取 Top N 候选（默认30）")
+            p_enrich.add_argument("--fetch", action="store_true", default=True,
+                                  help="Playwright 补采 JD 详情（默认开启）")
+            p_enrich.add_argument("--no-fetch", dest="fetch", action="store_false",
+                                  help="跳过 JD 补采，仅用已有 jd_text 做二次精排")
+            p_enrich.add_argument("--rescore", action="store_true", default=True,
+                                  help="对补采岗位做 LLM 二次精排（默认开启）")
+            p_enrich.add_argument("--no-rescore", dest="rescore", action="store_false",
+                                  help="跳过二次精排，仅输出补采结果")
+            p_enrich.add_argument("--import-jd", default="",
+                                  help="从 JSON 文件导入 JD 全文（{\"job_id\":\"JD\",...}）")
         elif name == "eval":
             p_eval = sub.add_parser(name, help=desc)
             p_eval.add_argument("--file", help="指定标注表路径（默认取最新；留出集评测时指向 holdout 文件）")
@@ -137,6 +151,12 @@ def main() -> None:
         print(skills_diagnose.run(
             jobs_csv=getattr(args, "jobs", None),
             profile_path=getattr(args, "profile", None),
+        ))
+    elif args.command == "enrich":
+        from . import enrich
+        print(enrich.run(
+            top=args.top, fetch=args.fetch, rescore=args.rescore,
+            import_jd_path=getattr(args, "import_jd", ""),
         ))
     elif args.command == "market":
         from . import analyze
