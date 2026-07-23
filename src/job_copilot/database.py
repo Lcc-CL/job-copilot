@@ -22,9 +22,10 @@ def _default_db_url() -> str:
 
 
 def _get_database_url() -> str:
-    url = os.getenv("DATABASE_URL")
-    # Auto-detect Zeabur/Neon PostgreSQL variables if DATABASE_URL not set
-    if not url:
+    url = os.getenv("DATABASE_URL", "").strip()
+    # Treat empty string, "${...}" template, or unset as "not set"
+    if not url or url.startswith("${"):
+        url = ""
         for var in ("POSTGRES_CONNECTION_STRING", "POSTGRES_URI",
                      "NEON_DATABASE_URL", "DATABASE_URL_REF"):
             url = os.getenv(var)
