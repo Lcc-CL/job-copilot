@@ -344,12 +344,20 @@ def create_application(job_id: int, body: ApplicationCreate):
 # ---------- Applications ----------
 
 def _app_row(a: Application) -> dict:
+    j = a.job
     return {
         "id": a.id,
         "job_pk": a.job_pk,
-        "job_title": a.job.title if a.job else None,
-        "job_company": a.job.company if a.job else None,
-        "job_url": a.job.url if a.job else None,
+        "job_title": j.title if j else None,
+        "job_company": j.company if j else None,
+        "job_url": j.url if j else None,
+        "job_recommendation": j.recommendation if j else None,
+        "job_enriched_score": j.enriched_score if j else None,
+        "job_salary_text": j.salary_text if j else None,
+        "job_city": j.city if j else None,
+        "job_jd_status": j.jd_status if j else None,
+        "job_original_score": j.original_score if j else None,
+        "job_greeting_text": j.greeting_text if j else None,
         "stage": a.stage,
         "priority": a.priority,
         "channel": a.channel,
@@ -378,6 +386,7 @@ def _evt_row(e: ApplicationEvent) -> dict:
 @app.get("/api/applications")
 def list_applications(
     stage: Optional[str] = Query(None),
+    recommendation: Optional[str] = Query(None),
     overdue: Optional[bool] = Query(None),
     due_before: Optional[str] = Query(None),
     keyword: Optional[str] = Query(None),
@@ -390,6 +399,8 @@ def list_applications(
 
         if stage:
             q = q.where(Application.stage == stage)
+        if recommendation:
+            q = q.where(Job.recommendation == recommendation)
         if overdue:
             today = _today_str()
             q = q.where(

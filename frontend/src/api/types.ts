@@ -1,0 +1,146 @@
+// ---- Shared ----
+
+export interface PaginatedResponse<T> {
+  total: number;
+  limit: number;
+  offset: number;
+  items: T[];
+}
+
+// ---- Dashboard ----
+
+export interface DashboardSummary {
+  total_jobs: number;
+  shortlisted: number;
+  greeting_ready: number;
+  contacted: number;
+  applied: number;
+  replied: number;
+  interviews: number;
+  offers: number;
+  rejected: number;
+  due_today: number;
+  overdue: number;
+  response_rate: number;
+  interview_rate: number;
+  recommendations: Record<string, number>;
+}
+
+export interface FollowUps {
+  overdue: ApplicationDetail[];
+  due_today: ApplicationDetail[];
+  upcoming: ApplicationDetail[];
+}
+
+// ---- Job ----
+
+export interface JobScore {
+  fit_score: number | null;
+  verdict: string | null;
+  archetype: string | null;
+  authenticity: string | null;
+  reasons: string | null;
+  highlights: string | null;
+  gaps: string | null;
+}
+
+export interface Job {
+  id: number;
+  platform: string;
+  job_id: string;
+  url: string | null;
+  title: string | null;
+  company: string | null;
+  company_size: string | null;
+  industry: string | null;
+  salary_text: string | null;
+  salary_min: number | null;
+  salary_max: number | null;
+  salary_months: number | null;
+  city: string | null;
+  district: string | null;
+  experience: string | null;
+  degree: string | null;
+  tags: string | null;
+  jd_text: string | null;
+  jd_status: string | null;
+  original_score: number | null;
+  enriched_score: number | null;
+  recommendation: string | null;
+  greeting_text: string | null;
+  has_application: boolean;
+  application_stage: string | null;
+  score: JobScore | null;
+}
+
+// ---- Application ----
+
+export interface ApplicationEvent {
+  id: number;
+  event_type: string;
+  from_stage: string | null;
+  to_stage: string | null;
+  content: string | null;
+  occurred_at: string | null;
+}
+
+export interface ApplicationDetail {
+  id: number;
+  job_pk: number;
+  job_title: string | null;
+  job_company: string | null;
+  job_url: string | null;
+  job_recommendation: string | null;
+  job_enriched_score: number | null;
+  job_salary_text: string | null;
+  job_city: string | null;
+  job_jd_status: string | null;
+  job_original_score: number | null;
+  job_greeting_text: string | null;
+  stage: string;
+  priority: string | null;
+  channel: string | null;
+  resume_version: string | null;
+  applied_at: string | null;
+  last_contact_at: string | null;
+  next_follow_up_at: string | null;
+  notes: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  events: ApplicationEvent[];
+}
+
+// ---- Mutations ----
+
+export interface ApplicationUpdate {
+  stage?: string;
+  priority?: string | null;
+  channel?: string;
+  resume_version?: string | null;
+  applied_at?: string | null;
+  last_contact_at?: string | null;
+  next_follow_up_at?: string | null;
+  notes?: string | null;
+}
+
+export interface JobUpdate {
+  jd_status?: string;
+  recommendation?: string;
+  greeting_text?: string;
+  notes?: string;
+}
+
+export interface ApplicationCreate {
+  stage: string;
+  priority?: string;
+  channel?: string;
+  resume_version?: string;
+  notes?: string;
+}
+
+export interface EventCreate {
+  event_type: string;
+  from_stage?: string;
+  to_stage?: string;
+  content?: string;
+}

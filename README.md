@@ -31,11 +31,24 @@ PYTHONPATH=src python -m job_copilot status           # 检查配置
 **典型一轮**：`collect import` → `match`（向量粗筛）→ `score`（LLM 精排）→ `greet`（分组招呼语）→
 本人在平台手动发送 → 回填 `data/exports/投递追踪-*.csv` → `stats`（竞争力分组对照报告）。
 
+## Web 前端（投递管理面板）
+
+```bash
+# 终端 1：启动 API
+PYTHONPATH=src python -m job_copilot web serve
+
+# 终端 2：启动前端
+cd frontend
+npm install
+npm run dev          # → http://localhost:5173
+```
+
 ## 目录结构
 ```
 job-copilot/
 ├── docs/             需求文档（PRD，含设计红线）
-├── src/job_copilot/  Python 引擎（16个命令）
+├── src/job_copilot/  Python 引擎（CLI + FastAPI）
+├── frontend/         React 投递管理面板
 ├── skills/           Claude Code 求职技能库（.claude/skills 软链于此）
 ├── tools/            油猴采集脚本 + 模型下载脚本
 ├── vendor/           career-ops 上游原文（MIT，方法论溯源）
