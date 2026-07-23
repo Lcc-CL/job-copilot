@@ -37,7 +37,7 @@ COMMANDS = [
     ("decide",    "P3", "生成个人求职决策报告"),
 ]
 
-IMPLEMENTED = {"status", "collect", "clean", "market", "match", "dashboard", "evalset", "score", "eval", "greet", "stats"}
+IMPLEMENTED = {"status", "collect", "clean", "market", "skills", "match", "dashboard", "evalset", "score", "eval", "greet", "stats"}
 
 
 def cmd_status() -> None:
@@ -96,6 +96,10 @@ def main() -> None:
                                  help="精排前 N 个粗筛候选（默认20，每条约十几秒）")
             p_score.add_argument("--skip-scored", action="store_true",
                                  help="跳过已精排的岗，只评接下来 N 个新候选（分批扩投用）")
+        elif name == "skills":
+            p_skills = sub.add_parser(name, help=desc)
+            p_skills.add_argument("--jobs", help="清洗后岗位CSV路径（默认 data/clean/cleaned_jobs.csv）")
+            p_skills.add_argument("--profile", help="简历/profile路径（默认 resume/母版简历.md）")
         elif name == "eval":
             p_eval = sub.add_parser(name, help=desc)
             p_eval.add_argument("--file", help="指定标注表路径（默认取最新；留出集评测时指向 holdout 文件）")
@@ -128,6 +132,12 @@ def main() -> None:
     elif args.command == "clean":
         from . import clean
         print(clean.run())
+    elif args.command == "skills":
+        from . import skills_diagnose
+        print(skills_diagnose.run(
+            jobs_csv=getattr(args, "jobs", None),
+            profile_path=getattr(args, "profile", None),
+        ))
     elif args.command == "market":
         from . import analyze
         print(analyze.market_report())
