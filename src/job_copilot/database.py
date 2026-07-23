@@ -22,7 +22,16 @@ def _default_db_url() -> str:
 
 
 def _get_database_url() -> str:
-    url = os.getenv("DATABASE_URL") or _default_db_url()
+    url = os.getenv("DATABASE_URL")
+    # Auto-detect Zeabur/Neon PostgreSQL variables if DATABASE_URL not set
+    if not url:
+        for var in ("POSTGRES_CONNECTION_STRING", "POSTGRES_URI",
+                     "NEON_DATABASE_URL", "DATABASE_URL_REF"):
+            url = os.getenv(var)
+            if url:
+                break
+    if not url:
+        url = _default_db_url()
     # Normalize Zeabur PostgreSQL URI: postgres:// → postgresql+psycopg://
     if url.startswith("postgres://"):
         url = "postgresql+psycopg://" + url[len("postgres://"):]
