@@ -311,18 +311,18 @@ def rescore_one(conn, r: dict, resume: str, model: str) -> dict:
     """用完整 JD 做二次精排。"""
     jd_text = (r.get("jd_text") or "").strip()
     if not jd_text:
-        # 无 JD 全文，使用原来的精排分数（如果有）
+        # 无 JD 全文 → PENDING_JD（等待补采），保留原始分供排序参考
         existing = db.load_scores(conn).get(r["id"], {})
         if existing:
-            existing["recommendation"] = _rec_from_fit(existing.get("fit_score"))
+            existing["recommendation"] = "PENDING_JD"
             existing["confidence"] = "low"
-            existing["score_change_note"] = "无JD全文，基于标签评估"
+            existing["score_change_note"] = "等待JD全文验证——当前评分仅基于列表页标签"
             existing["matched_evidence"] = existing.get("highlights", [])
             existing["missing_requirements"] = existing.get("gaps", [])
             existing["hard_blockers"] = []
             existing["acceptable_gaps"] = []
             return existing
-        return {"fit_score": 0, "verdict": "慎投", "recommendation": "REVIEW",
+        return {"fit_score": 0, "verdict": "慎投", "recommendation": "PENDING_JD",
                 "confidence": "low", "score_change_note": "无JD全文且无历史精排"}
 
     # 截断过长 JD（保留职责和要求部分）
@@ -426,15 +426,19 @@ def _write_reports(enriched: list[dict], candidates: list[dict],
     # 统计
     fr_success = sum(1 for fr in fetch_results if fr.success)
     rec_counts = Counter(s.get("recommendation") for s in enriched)
-    rec_counts = {k: rec_counts.get(k, 0) for k in ["APPLY_NOW", "REVIEW", "SKIP"]}
+    for k in ["APPLY_NOW", "REVIEW", "SKIP", "PENDING_JD"]:
+        rec_counts.setdefault(k, 0)
 
     # --- Markdown ---
     today = date.today().isoformat()
+    # 标题区分：有 JD 精排 vs 待补采
+    has_real_jd = rec_counts['APPLY_NOW'] + rec_counts['REVIEW'] + rec_counts['SKIP'] > 0
+    title = "投递候选清单（JD二次精排）" if has_real_jd else "投递候选清单（待补充JD）"
     L = [
-        f"# 投递候选清单（JD 补采 + 二次精排）",
+        f"# {title}",
         "",
         f"> 生成：{today} ｜ 候选：{len(candidates)} 个 ｜ JD 补采成功：{fr_success} 个",
-        f"> APPLY_NOW {rec_counts['APPLY_NOW']} · REVIEW {rec_counts['REVIEW']} · SKIP {rec_counts['SKIP']}",
+        f"> APPLY_NOW {rec_counts['APPLY_NOW']} · REVIEW {rec_counts['REVIEW']} · SKIP {rec_counts['SKIP']} · PENDING_JD {rec_counts['PENDING_JD']}",
         "",
         "---",
         "",
@@ -442,12 +446,16 @@ def _write_reports(enriched: list[dict], candidates: list[dict],
 
     current_group = None
     for i, s in enumerate(enriched):
-        rec = s.get("recommendation", "REVIEW")
+        rec = s.get("recommendation", "PENDING_JD")
         if rec != current_group:
             current_group = rec
-            emoji = {"APPLY_NOW": "🟢", "REVIEW": "🟡", "SKIP": "🔴"}[rec]
+            emoji = {"APPLY_NOW": "🟢", "REVIEW": "🟡", "SKIP": "🔴", "PENDING_JD": "⚪"}[rec]
             L.append(f"## {emoji} {rec}")
             L.append("")
+            if rec == "PENDING_JD":
+                L.append("> ⚠ 以下岗位尚未获取 JD 全文，当前评分仅基于列表页标签。")
+                L.append("> 请在浏览器打开链接清单，补充 JD 后运行 `python -m job_copilot enrich --import-jd <文件>` 重新精排。")
+                L.append("")
 
         r = s.get("_job", {})
         L.append(f"### {i+1}. {r.get('title','')} — {r.get('company','')}")
@@ -458,7 +466,7 @@ def _write_reports(enriched: list[dict], candidates: list[dict],
         if s.get("_jd_length"):
             L.append(f"- **JD**：已获取（{s['_jd_length']}字）")
         else:
-            L.append(f"- **JD**：⚠ 未获取，评分基于标签")
+            L.append(f"- **JD**：⚠ 未获取，等待手动补采")
         if s.get("score_change_note"):
             L.append(f"- **评分变化**：{s['score_change_note']}")
         L.append(f"- **理由**：{'；'.join(s.get('reasons',[]))}")
@@ -537,7 +545,8 @@ def _write_reports(enriched: list[dict], candidates: list[dict],
     green_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
     yellow_fill = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")
     red_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
-    rec_fills = {"APPLY_NOW": green_fill, "REVIEW": yellow_fill, "SKIP": red_fill}
+    grey_fill = PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
+    rec_fills = {"APPLY_NOW": green_fill, "REVIEW": yellow_fill, "SKIP": red_fill, "PENDING_JD": grey_fill}
 
     for ci, h in enumerate(xl_headers, 1):
         cell = ws.cell(row=1, column=ci, value=h)
@@ -748,9 +757,13 @@ def run(top: int = 30, fetch: bool = True, rescore: bool = True,
     failure_reasons = Counter(fr.failure_reason for fr in fetch_results if not fr.success)
     fail_summary = "、".join(f"{k}({v})" for k, v in failure_reasons.most_common(3)) if failure_reasons else "无"
 
+    jd_count = sum(1 for s in enriched if s.get("_jd_length", 0) > 0)
+    pending_count = rec.get("PENDING_JD", 0)
+    title = "JD 补采 + 二次精排完成" if jd_count else "候选清单已生成（待补充 JD）"
+
     lines = [
         "=" * 55,
-        "  JD 补采 + 二次精排完成",
+        f"  {title}",
         "=" * 55,
         f"  候选岗位数       : {len(candidates)}",
         f"  JD 补采成功      : {fr_ok}",
@@ -759,16 +772,22 @@ def run(top: int = 30, fetch: bool = True, rescore: bool = True,
         f"  APPLY_NOW       : {rec.get('APPLY_NOW', 0)}",
         f"  REVIEW          : {rec.get('REVIEW', 0)}",
         f"  SKIP            : {rec.get('SKIP', 0)}",
+        f"  PENDING_JD      : {pending_count}",
         "",
         f"  链接清单(手动补采) : {url_html}",
         f"  候选清单 Markdown : {md_path}",
         f"  候选清单 CSV      : {csv_path}",
         f"  候选清单 Excel    : {xlsx_path}",
-        "",
-        f"  💡 如 JD 补采失败：用浏览器打开链接清单，粘贴 JD → 导出JSON → "
-        f"python -m job_copilot enrich --import-jd <文件>",
-        "=" * 55,
     ]
+
+    if pending_count > 0:
+        lines += [
+            "",
+            f"  💡 {pending_count} 个岗位待补充 JD：用浏览器打开链接清单，"
+            f"粘贴 JD → 导出JSON → ",
+            f"     python -m job_copilot enrich --import-jd <文件>",
+        ]
+    lines.append("=" * 55)
     return "\n".join(lines)
 
 
