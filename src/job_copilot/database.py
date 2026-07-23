@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import datetime
 import os
 from pathlib import Path
 
@@ -20,7 +21,8 @@ def _default_db_url() -> str:
     return f"sqlite:///{db_path}"
 
 
-DATABASE_URL = os.getenv("DATABASE_URL", _default_db_url())
+def _get_database_url() -> str:
+    return os.getenv("DATABASE_URL") or _default_db_url()
 
 
 def _engine_kwargs(url: str) -> dict:
@@ -39,9 +41,10 @@ _SessionLocal: sessionmaker | None = None
 def get_engine() -> Engine:
     global _engine
     if _engine is None:
-        _engine = create_engine(DATABASE_URL, echo=False, **_engine_kwargs(DATABASE_URL))
+        url = _get_database_url()
+        _engine = create_engine(url, echo=False, **_engine_kwargs(url))
         # SQLite: 启用 WAL 和级联外键
-        if "sqlite" in DATABASE_URL:
+        if "sqlite" in url:
 
             @event.listens_for(_engine, "connect")
             def _sqlite_pragma(dbapi_conn, _record):
@@ -58,15 +61,38 @@ def get_session() -> Session:
     return _SessionLocal()
 
 
+SCHEMA_VERSION = "20260723-01"
+
+
 def init_db(*, drop_applications: bool = False) -> list[str]:
     """初始化数据库：创建表 + 执行幂等迁移。返回迁移日志。"""
     from .models import Base, run_migrations
+    from sqlalchemy import text as sa_text
 
     engine = get_engine()
     # 先创建基础表（jobs/job_vectors/job_scores 等已有表，IF NOT EXISTS 安全）
     Base.metadata.create_all(bind=engine)
     # 再执行列级迁移（jobs 新列 / application_events / sync_runs）
     logs = run_migrations(engine, drop_applications=drop_applications)
+
+    # 记录 schema_version（幂等）
+    with engine.begin() as conn:
+        conn.execute(sa_text(
+            "CREATE TABLE IF NOT EXISTS schema_version ("
+            "  version TEXT PRIMARY KEY,"
+            "  applied_at TEXT"
+            ")"
+        ))
+        existing = conn.execute(
+            sa_text("SELECT version FROM schema_version WHERE version = :v"),
+            {"v": SCHEMA_VERSION},
+        ).fetchone()
+        if not existing:
+            conn.execute(
+                sa_text("INSERT INTO schema_version (version, applied_at) VALUES (:v, :ts)"),
+                {"v": SCHEMA_VERSION, "ts": datetime.datetime.now(datetime.timezone.utc).isoformat()},
+            )
+            logs.append(f"schema_version: {SCHEMA_VERSION}")
 
     # 回填：从 job_scores + job_vectors 推导 jobs 新字段
     with engine.begin() as conn:

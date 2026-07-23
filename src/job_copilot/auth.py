@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from fastapi import Request, HTTPException
+from fastapi.responses import JSONResponse
 from pwdlib import PasswordHash
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -141,7 +142,9 @@ def register_auth_routes(app):
     @app.post("/api/auth/logout")
     async def auth_logout(request: Request):
         request.session.clear()
-        return {"status": "ok"}
+        response = JSONResponse({"status": "ok"})
+        response.delete_cookie("jc_session")
+        return response
 
 
 # ---- CLI helper ----

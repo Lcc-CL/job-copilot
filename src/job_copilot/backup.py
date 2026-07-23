@@ -76,6 +76,10 @@ def import_data(input_path: str) -> str:
     if data.get("version") != EXPORT_VERSION:
         return f"✗ 备份版本不兼容: {data.get('version')} (需要 {EXPORT_VERSION})"
 
+    # Ensure schema exists before importing data
+    from .database import init_db
+    init_db()
+
     tables = data.get("tables", {})
     session = get_session()
     stats = {"inserted": 0, "updated": 0, "skipped": 0, "conflicts": 0}
