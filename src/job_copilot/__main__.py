@@ -37,7 +37,7 @@ COMMANDS = [
     ("decide",    "P3", "生成个人求职决策报告"),
 ]
 
-IMPLEMENTED = {"status", "collect", "market", "match", "dashboard", "evalset", "score", "eval", "greet", "stats"}
+IMPLEMENTED = {"status", "collect", "clean", "market", "match", "dashboard", "evalset", "score", "eval", "greet", "stats"}
 
 
 def cmd_status() -> None:
@@ -94,9 +94,17 @@ def main() -> None:
             p_score = sub.add_parser(name, help=desc)
             p_score.add_argument("--top", type=int, default=20,
                                  help="精排前 N 个粗筛候选（默认20，每条约十几秒）")
+            p_score.add_argument("--skip-scored", action="store_true",
+                                 help="跳过已精排的岗，只评接下来 N 个新候选（分批扩投用）")
         elif name == "eval":
             p_eval = sub.add_parser(name, help=desc)
             p_eval.add_argument("--file", help="指定标注表路径（默认取最新；留出集评测时指向 holdout 文件）")
+        elif name == "greet":
+            p_greet = sub.add_parser(name, help=desc)
+            p_greet.add_argument("--min-fit", type=int, default=4,
+                                 help="最低精排分（默认4；扩投对照可降到3，自动滤掉真实性低/够不着的）")
+            p_greet.add_argument("--limit", type=int, default=20,
+                                 help="本批最多生成条数（默认20）")
         elif name == "collect":
             p_collect = sub.add_parser(name, help=desc)
             p_collect.add_argument("action", choices=["login", "run", "import"],
@@ -117,6 +125,9 @@ def main() -> None:
         cmd_status()
     elif args.command == "collect":
         cmd_collect(args)
+    elif args.command == "clean":
+        from . import clean
+        print(clean.run())
     elif args.command == "market":
         from . import analyze
         print(analyze.market_report())
@@ -135,13 +146,13 @@ def main() -> None:
         print(evalset.make_worksheet())
     elif args.command == "score":
         from . import score
-        print(score.score_top(top_k=args.top))
+        print(score.score_top(top_k=args.top, skip_scored=args.skip_scored))
     elif args.command == "eval":
         from . import evaluate
         print(evaluate.run(path=getattr(args, "file", None)))
     elif args.command == "greet":
         from . import greet
-        print(greet.generate())
+        print(greet.generate(min_fit=args.min_fit, limit=args.limit))
     elif args.command == "stats":
         from . import stats
         print(stats.report())

@@ -83,14 +83,20 @@ def score_one(conn, r: dict, resume: str, model: str) -> dict:
     return s
 
 
-def score_top(top_k: int = 20, resume: str = "") -> str:
+def score_top(top_k: int = 20, resume: str = "", skip_scored: bool = False) -> str:
     conn = db.connect()
     resume = resume or _resume_text()
     if not resume:
         return "未找到母版简历，无法精排。"
-    cands = match.ranked_matches(top_k=top_k, filtered=True)
+    if skip_scored:
+        # 跳过已精排的岗，取粗筛排序里接下来的 top_k 个新候选（分批扩投，不重复花 API）
+        done = {r[0] for r in conn.execute("SELECT job_pk FROM job_scores").fetchall()}
+        pool = match.ranked_matches(top_k=top_k + len(done), filtered=True)
+        cands = [(sim, r) for sim, r in pool if r["id"] not in done][:top_k]
+    else:
+        cands = match.ranked_matches(top_k=top_k, filtered=True)
     if not cands:
-        return "无候选职位。先 collect import 并 match。"
+        return "无候选职位。先 collect import 并 match（--skip-scored 时可能已全部精排过）。"
 
     cfg = load_config()
     model = cfg.llm["model_analysis"]
@@ -143,6 +149,11 @@ def _report(results: list) -> str:
 
     report = "\n".join(L)
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    # 同日多批不覆盖：已存在则加 -2/-3 后缀
     path = REPORTS_DIR / f"精排-{date.today().isoformat()}.md"
+    _n = 2
+    while path.exists():
+        path = REPORTS_DIR / f"精排-{date.today().isoformat()}-{_n}.md"
+        _n += 1
     path.write_text(report, encoding="utf-8")
     return report + f"\n\n---\n已保存：{path}"

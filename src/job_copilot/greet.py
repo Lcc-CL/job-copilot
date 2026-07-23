@@ -10,6 +10,7 @@ Boss直聘 招呼语特点：短（100-150字内）、开头点出对该公司/�
 from __future__ import annotations
 
 import csv
+import glob
 import json
 from datetime import date
 
@@ -51,13 +52,28 @@ def generate(min_fit: int = 4, limit: int = 20) -> str:
     resume = score_mod._resume_text()
     if not resume:
         return "未找到母版简历。"
+    # 过滤：够得着（seniority_ok）+ 真实性非低（Block G 幽灵岗嫌疑不投）
     rows = conn.execute(
         """SELECT s.fit_score, s.highlights, j.* FROM job_scores s JOIN jobs j ON j.id=s.job_pk
-           WHERE s.fit_score >= ? ORDER BY s.fit_score DESC""", (min_fit,)
+           WHERE s.fit_score >= ? AND s.seniority_ok=1 AND s.authenticity != '低'
+           ORDER BY s.fit_score DESC""", (min_fit,)
     ).fetchall()
-    rows = [dict(r) for r in rows][:limit]
+    rows = [dict(r) for r in rows]
     if not rows:
         return f"没有 fit>={min_fit} 的岗位。先跑 score 精排。"
+
+    # 排除已在追踪表里的岗位（已生成/已投过）——支持分批投递不重复
+    sent = set()
+    for f in sorted(glob.glob(str(DATA_DIR / "exports" / "投递追踪-*.csv"))):
+        for row in csv.DictReader(open(f, encoding="utf-8-sig")):
+            u = (row.get("链接") or "").strip()
+            if u:
+                sent.add(u)
+    rows = [r for r in rows if (r.get("url") or "").strip() not in sent]
+    if not rows:
+        return (f"fit>={min_fit} 的岗位都已在追踪表中（已投/已生成过招呼语）。"
+                f"先 score 精排新候选，或降低 min_fit。")
+    rows = rows[:limit]
 
     model = load_config().llm["model_drafting"]  # 文案用 flash 更快
     print(f"→ 为 {len(rows)} 个高契合岗生成招呼语（不含公司名，模型 {model}）…")
@@ -108,13 +124,23 @@ def generate(min_fit: int = 4, limit: int = 20) -> str:
         })
 
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    # 同日多批不覆盖：已存在则加 -2/-3 后缀
     path = REPORTS_DIR / f"招呼语-{date.today().isoformat()}.md"
+    _m = 2
+    while path.exists():
+        path = REPORTS_DIR / f"招呼语-{date.today().isoformat()}-{_m}.md"
+        _m += 1
     path.write_text("\n".join(L), encoding="utf-8")
 
     # 投递追踪表（你发完填状态，后续 stats 算已读不回率）
     track_dir = DATA_DIR / "exports"
     track_dir.mkdir(parents=True, exist_ok=True)
+    # 同日多批不覆盖：已存在则加 -2/-3 后缀（stats 按 投递追踪-*.csv 通配，都会统计到）
     track_path = track_dir / f"投递追踪-{date.today().isoformat()}.csv"
+    _n = 2
+    while track_path.exists():
+        track_path = track_dir / f"投递追踪-{date.today().isoformat()}-{_n}.csv"
+        _n += 1
     cols = ["分组", "公司", "职位", "薪资", "招呼语", "已发日期(填)", "已读(填1/0)",
             "回复(填1/0)", "邀约(填1/0)", "链接"]
     with open(track_path, "w", encoding="utf-8-sig", newline="") as f:
