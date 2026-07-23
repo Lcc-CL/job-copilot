@@ -17,3 +17,11 @@ alembic>=1.12
 pydantic>=2.0
 pydantic-settings>=2.0
 python-multipart>=0.0.6
+
+# 认证
+pwdlib[argon2]>=0.2
+python-multipart>=0.0.6
+itsdangerous>=2.0   # Starlette SessionMiddleware 依赖
+
+# PostgreSQL（生产可选）
+psycopg[binary]>=3.1

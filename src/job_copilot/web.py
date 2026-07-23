@@ -14,32 +14,80 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from sqlalchemy import select, func, and_, case
+from sqlalchemy import select, func, and_, case, text
 from sqlalchemy.orm import Session
 
-from .database import get_session, init_db
+from .database import get_session, init_db, get_engine
 from .models import (
     Job, JobScore, Application, ApplicationEvent, SyncRun,
     APPLICATION_STAGES,
 )
 from .importer import update_application_stage, import_tracking_csv
 from .config import DATA_DIR
+from .auth import (
+    add_session_middleware, register_auth_routes, require_auth,
+    get_auth_config, cmd_hash_password,
+)
+
+FRONTEND_DIR = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
 
 app = FastAPI(
     title="Job Copilot API",
     description="投递管理系统 —— 岗位、投递状态、事件追踪",
-    version="0.2.0",
+    version="0.3.0",
+    docs_url=None if os.getenv("APP_ENV") == "production" else "/docs",
+    redoc_url=None if os.getenv("APP_ENV") == "production" else "/redoc",
+    openapi_url=None if os.getenv("APP_ENV") == "production" else "/openapi.json",
 )
 
+# Register auth routes (must be before SessionMiddleware so they can set session)
+register_auth_routes(app)
+
+# Auth protection: pure ASGI middleware (before Session so it runs AFTER Session)
+# add_middleware is LIFO: first added = innermost, last = outermost
+# Desired stack: CORS(outer) → Session → Auth(inner) → App
+class AuthASGIMiddleware:
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        path = scope.get("path", "")
+        if (path.startswith("/api/auth/") or
+            path.startswith("/api/health") or
+            not path.startswith("/api/")):
+            await self.app(scope, receive, send)
+            return
+
+        session = scope.get("session", {})
+        if not session.get("user"):
+            from starlette.responses import JSONResponse as JsonResp
+            response = JsonResp(status_code=401, content={"detail": "Authentication required"})
+            await response(scope, receive, send)
+            return
+
+        await self.app(scope, receive, send)
+
+app.add_middleware(AuthASGIMiddleware)
+
+# Session middleware (after Auth so it runs BEFORE Auth in stack)
+add_session_middleware(app)
+
+# CORS (outermost)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
+    allow_credentials=True,
 )
 
 
@@ -86,7 +134,19 @@ class EventCreate(BaseModel):
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "version": "0.2.0"}
+    db_status = "ok"
+    try:
+        engine = get_engine()
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+    except Exception as e:
+        db_status = f"error: {e}"
+    status_code = 200 if db_status == "ok" else 503
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        content={"status": "ok" if db_status == "ok" else "error", "database": db_status},
+        status_code=status_code,
+    )
 
 
 # ---------- Dashboard ----------
@@ -711,8 +771,50 @@ def cmd_import_tracking(csv_path: str) -> str:
 
 
 def cmd_serve(host: str = "127.0.0.1", port: int = 8000) -> None:
-    """启动 API 服务。"""
+    """启动 API 服务（production 托管前端静态文件）。"""
     import uvicorn
+
+    # Auto-init DB on startup (idempotent)
+    try:
+        init_db(drop_applications=False)
+    except Exception as e:
+        print(f"⚠ DB init warning: {e}")
+
+    if FRONTEND_DIR.exists():
+        # Mount static assets at /assets/
+        assets_dir = FRONTEND_DIR / "assets"
+        if assets_dir.exists():
+            app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
+        # Mount favicon etc.
+        for static_file in FRONTEND_DIR.glob("*"):
+            if static_file.is_file() and static_file.suffix in (".svg", ".ico", ".png"):
+                pass  # handled by SPA fallback below
+
+        # SPA fallback: serve index.html for all non-/api routes
+        @app.get("/{full_path:path}")
+        async def serve_spa(full_path: str = ""):
+            file_path = FRONTEND_DIR / full_path
+            # If the path is a real file, serve it
+            if file_path.is_file():
+                return FileResponse(str(file_path))
+            # Otherwise serve index.html for SPA routing
+            index = FRONTEND_DIR / "index.html"
+            if index.exists():
+                return HTMLResponse(index.read_text(encoding="utf-8"))
+            return HTMLResponse("Frontend not built. Run: cd frontend && npm run build", status_code=404)
+
     print(f"Job Copilot API → http://{host}:{port}")
-    print(f"API 文档 → http://{host}:{port}/docs")
-    uvicorn.run("job_copilot.web:app", host=host, port=port, reload=False)
+    if os.getenv("APP_ENV") != "production":
+        print(f"API 文档 → http://{host}:{port}/docs")
+    uvicorn.run(
+        "job_copilot.web:app",
+        host=host,
+        port=port,
+        reload=False,
+        log_level="info" if os.getenv("APP_ENV") == "production" else "info",
+    )
+
+
+def cmd_hash_password_cli(password: str) -> str:
+    """CLI: 生成密码 hash。"""
+    return cmd_hash_password(password)

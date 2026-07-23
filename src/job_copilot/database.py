@@ -24,9 +24,12 @@ DATABASE_URL = os.getenv("DATABASE_URL", _default_db_url())
 
 
 def _engine_kwargs(url: str) -> dict:
+    kwargs: dict = {}
     if "sqlite" in url:
-        return {"connect_args": {"check_same_thread": False}}
-    return {}
+        kwargs["connect_args"] = {"check_same_thread": False}
+    elif "postgresql" in url:
+        kwargs["pool_pre_ping"] = True
+    return kwargs
 
 
 _engine: Engine | None = None

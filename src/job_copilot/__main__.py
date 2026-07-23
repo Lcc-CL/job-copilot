@@ -137,13 +137,18 @@ def main() -> None:
                                    help="import 用：待导入的 JSON 文件或目录（默认扫 ~/Downloads）")
         elif name == "web":
             p_web = sub.add_parser(name, help=desc)
-            p_web.add_argument("action", choices=["init-db", "import-tracking", "serve"],
-                               help="init-db=初始化/迁移数据库; "
-                                    "import-tracking=导入投递追踪CSV; "
-                                    "serve=启动 API 服务")
-            p_web.add_argument("--csv", help="import-tracking: CSV 路径或目录（默认取最新）")
+            p_web.add_argument("action",
+                               choices=["init-db", "import-tracking", "serve",
+                                        "hash-password", "export-data", "import-data", "migrate"],
+                               help="init-db=初始化/迁移数据库; import-tracking=导入投递追踪CSV; "
+                                    "serve=启动 API; hash-password=生成密码hash; "
+                                    "export-data/import-data=数据备份/恢复; migrate=运行迁移")
+            p_web.add_argument("--csv", help="import-tracking: CSV 路径或目录")
             p_web.add_argument("--host", default="127.0.0.1", help="serve: 绑定地址")
             p_web.add_argument("--port", type=int, default=8000, help="serve: 端口")
+            p_web.add_argument("--password", help="hash-password: 明文密码")
+            p_web.add_argument("--output", help="export-data: 输出文件路径")
+            p_web.add_argument("--path", help="import-data: 备份文件路径")
         else:
             sub.add_parser(name, help=f"[{phase}] {desc}")
 
@@ -203,6 +208,27 @@ def main() -> None:
         elif args.action == "serve":
             web_mod.cmd_serve(host=getattr(args, "host", "127.0.0.1"),
                             port=getattr(args, "port", 8000))
+        elif args.action == "hash-password":
+            from . import auth
+            pw = getattr(args, "password", "")
+            if not pw:
+                import getpass
+                pw = getpass.getpass("Password: ")
+            print(auth.cmd_hash_password(pw))
+        elif args.action == "export-data":
+            from . import backup
+            output = getattr(args, "output", "data/backups/jobcopilot-backup.json")
+            print(backup.export_data(output))
+        elif args.action == "import-data":
+            from . import backup
+            path = getattr(args, "path", None)
+            if not path:
+                print("✗ 用法: python -m job_copilot web import-data <backup.json>")
+                sys.exit(1)
+            print(backup.import_data(path))
+        elif args.action == "migrate":
+            from . import web as wm
+            print(wm.cmd_init_db())
     elif args.command == "stats":
         from . import stats
         print(stats.report())

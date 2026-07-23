@@ -1,8 +1,9 @@
 import { NavLink, Outlet, useLocation } from "react-router-dom";
-import { LayoutDashboard, ListChecks, RefreshCw, Wifi, WifiOff, Database, CalendarCheck } from "lucide-react";
+import { LayoutDashboard, ListChecks, RefreshCw, Wifi, WifiOff, Database, CalendarCheck, LogOut } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useState, useEffect } from "react";
 import { fetchDashboard } from "../api/client";
+import { useAuth } from "./AuthProvider";
 
 const PAGE_TITLES: Record<string, string> = {
   "/": "Dashboard",
@@ -14,6 +15,7 @@ const PAGE_TITLES: Record<string, string> = {
 export default function Layout() {
   const qc = useQueryClient();
   const loc = useLocation();
+  const { user, logout } = useAuth();
   const [ts, setTs] = useState(new Date());
   const [online, setOnline] = useState(true);
 
@@ -58,6 +60,19 @@ export default function Layout() {
             Follow-ups
           </NavLink>
         </nav>
+        <div style={{ padding: "12px", borderTop: "1px solid var(--border)", fontSize: 12 }}>
+          <div style={{ color: "var(--text-secondary)", marginBottom: 6 }}>{user || "—"}</div>
+          <button
+            onClick={logout}
+            style={{
+              background: "none", border: "none", cursor: "pointer",
+              display: "flex", alignItems: "center", gap: 6,
+              color: "var(--text-secondary)", fontSize: 12, padding: 0,
+            }}
+          >
+            <LogOut size={14} /> Sign out
+          </button>
+        </div>
       </aside>
       <div className="main-area">
         <header className="topbar">

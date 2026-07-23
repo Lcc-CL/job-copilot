@@ -158,7 +158,25 @@ export default function Dashboard() {
               <XAxis dataKey="name" tick={{ fontSize: 11 }} />
               <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
               <Tooltip />
-              <Bar dataKey="count" fill="var(--primary)" radius={[4, 4, 0, 0]} />
+              <Bar
+                dataKey="count"
+                fill="var(--primary)"
+                radius={[4, 4, 0, 0]}
+                cursor="pointer"
+                onClick={(data) => {
+                  const stageMap: Record<string, string> = {
+                    "Greeting Ready": "GREETING_READY",
+                    "Contacted": "CONTACTED",
+                    "Applied": "APPLIED",
+                    "Replied": "REPLIED",
+                    "Interviews": "INTERVIEW",
+                    "Offers": "OFFER",
+                    "Rejected": "REJECTED",
+                  };
+                  const stage = stageMap[data?.name as string];
+                  if (stage) navigate(`/applications?stage=${stage}`);
+                }}
+              />
             </BarChart>
           </ResponsiveContainer>
         )}

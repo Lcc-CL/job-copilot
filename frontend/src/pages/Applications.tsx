@@ -15,6 +15,7 @@ const STAGES = [
 const RECOMMENDATIONS = ["APPLY_NOW", "REVIEW", "SKIP", "PENDING_JD"];
 
 const PAGE_SIZE = 25;
+const BOARD_PAGE_SIZE = 500;
 
 function recColor(rec: string): string {
   const map: Record<string, string> = {
@@ -50,7 +51,7 @@ export default function Applications() {
     stage: stage || undefined,
     recommendation: recommendation || undefined,
     overdue: overdue || undefined,
-    limit: PAGE_SIZE,
+    limit: view === "board" ? BOARD_PAGE_SIZE : PAGE_SIZE,
     offset: page * PAGE_SIZE,
   }), [keyword, stage, recommendation, overdue, page]);
 
