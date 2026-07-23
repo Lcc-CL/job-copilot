@@ -30,9 +30,27 @@ def _get_database_url() -> str:
             url = os.getenv(var)
             if url:
                 break
+    # Fallback: construct from individual PG env vars
+    if not url:
+        pg_host = os.getenv("PGHOST")
+        if pg_host:
+            pg_user = os.getenv("PGUSER", "postgres")
+            pg_pass = os.getenv("PGPASSWORD", "")
+            pg_db = os.getenv("PGDATABASE", "postgres")
+            pg_port = os.getenv("PGPORT", "5432")
+            url = f"postgresql+psycopg://{pg_user}:{pg_pass}@{pg_host}:{pg_port}/{pg_db}"
+    # Zeabur internal networking: use env vars ZEABUR_PG_USER/PASS/HOST/DB
+    if not url:
+        zb_host = os.getenv("ZEABUR_PG_HOST")
+        if zb_host:
+            zb_user = os.getenv("ZEABUR_PG_USER", "root")
+            zb_pass = os.getenv("ZEABUR_PG_PASS", "")
+            zb_db = os.getenv("ZEABUR_PG_DB", "zeabur")
+            zb_port = os.getenv("ZEABUR_PG_PORT", "5432")
+            url = f"postgresql+psycopg://{zb_user}:{zb_pass}@{zb_host}:{zb_port}/{zb_db}"
     if not url:
         url = _default_db_url()
-    # Normalize Zeabur PostgreSQL URI: postgres:// → postgresql+psycopg://
+    # Normalize: postgres:// → postgresql+psycopg://
     if url.startswith("postgres://"):
         url = "postgresql+psycopg://" + url[len("postgres://"):]
     elif url.startswith("postgresql://") and "+psycopg" not in url:
