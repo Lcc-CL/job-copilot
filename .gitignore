@@ -37,5 +37,8 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 
+# ===== Railway 部署 =====
+.railway/
+
 # ===== 系统 =====
 .DS_Store
