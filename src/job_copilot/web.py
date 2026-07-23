@@ -196,6 +196,7 @@ def _job_row(j: Job, include_score: bool = True) -> dict:
         "recommendation": j.recommendation,
         "greeting_text": j.greeting_text,
         "has_application": j.application is not None,
+        "application_id": j.application.id if j.application else None,
         "application_stage": j.application.stage if j.application else None,
     }
     if include_score and j.score:
@@ -614,6 +615,54 @@ def _today_str() -> str:
 
 def _today_dt() -> datetime.date:
     return datetime.date.today()
+
+
+# ---------- Follow-up Action ----------
+
+class FollowUpAction(BaseModel):
+    content: Optional[str] = None
+    next_follow_up_at: Optional[str] = None
+    stage: Optional[str] = None
+
+
+@app.post("/api/applications/{application_id}/follow-up")
+def follow_up_action(application_id: int, body: FollowUpAction):
+    """原子跟进操作：更新 last_contact_at / next_follow_up_at / stage，写入事件。"""
+    session = get_session()
+    try:
+        a = session.get(Application, application_id)
+        if not a:
+            raise HTTPException(404, "投递记录不存在")
+
+        now = _now()
+        a.last_contact_at = now
+
+        if body.next_follow_up_at is not None:
+            a.next_follow_up_at = body.next_follow_up_at if body.next_follow_up_at else None
+
+        old_stage = a.stage
+        if body.stage and body.stage != a.stage:
+            if body.stage not in APPLICATION_STAGES:
+                raise HTTPException(400, f"无效 stage: {body.stage}")
+            a.stage = body.stage
+
+        a.updated_at = now
+
+        # 写入事件
+        evt = ApplicationEvent(
+            application_id=a.id,
+            event_type="follow_up",
+            from_stage=old_stage,
+            to_stage=a.stage,
+            content=body.content or "",
+            occurred_at=now,
+        )
+        session.add(evt)
+        session.commit()
+        session.refresh(a)
+        return _app_row(a)
+    finally:
+        session.close()
 
 
 # ============================================================

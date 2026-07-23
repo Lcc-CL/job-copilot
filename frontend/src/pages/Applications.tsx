@@ -1,10 +1,11 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useApplications } from "../hooks/queries";
-import { AlertTriangle, Loader2, Search, ExternalLink } from "lucide-react";
+import { AlertTriangle, Loader2, Search, ExternalLink, Table, Columns } from "lucide-react";
 import DetailDrawer from "../components/DetailDrawer";
+import BoardView from "../components/BoardView";
 import { stageColor, fmtDate } from "./Dashboard";
 import type { ApplicationDetail } from "../api/types";
-// ApplicationDetail used in AppRow props
 
 const STAGES = [
   "DISCOVERED", "SHORTLISTED", "GREETING_READY", "CONTACTED",
@@ -26,12 +27,23 @@ function recColor(rec: string): string {
 }
 
 export default function Applications() {
-  const [keyword, setKeyword] = useState("");
-  const [stage, setStage] = useState("");
-  const [recommendation, setRecommendation] = useState("");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [keyword, setKeyword] = useState(searchParams.get("keyword") || "");
+  const [stage, setStage] = useState(searchParams.get("stage") || "");
+  const [recommendation, setRecommendation] = useState(searchParams.get("recommendation") || "");
   const [overdue, setOverdue] = useState(false);
   const [page, setPage] = useState(0);
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [view, setView] = useState<"table" | "board">("table");
+
+  // Auto-open detail from URL param
+  useEffect(() => {
+    const idParam = searchParams.get("id");
+    if (idParam) {
+      const id = Number(idParam);
+      if (id) setSelectedId(id);
+    }
+  }, [searchParams]);
 
   const params = useMemo(() => ({
     keyword: keyword || undefined,
@@ -59,7 +71,14 @@ export default function Applications() {
         />
         <select
           value={stage}
-          onChange={(e) => { setStage(e.target.value); setPage(0); }}
+          onChange={(e) => {
+            setStage(e.target.value); setPage(0);
+            if (e.target.value) {
+              setSearchParams({ stage: e.target.value });
+            } else {
+              setSearchParams({});
+            }
+          }}
         >
           <option value="">All Stages</option>
           {STAGES.map((s) => (
@@ -84,6 +103,32 @@ export default function Applications() {
           Overdue only
         </label>
         <div style={{ flex: 1 }} />
+        <div style={{ display: "flex", border: "1px solid var(--border)", borderRadius: 6, overflow: "hidden" }}>
+          <button
+            className="btn btn-sm"
+            style={{
+              background: view === "table" ? "var(--primary)" : "var(--surface)",
+              color: view === "table" ? "white" : "var(--text)",
+              border: "none",
+              borderRadius: 0,
+            }}
+            onClick={() => setView("table")}
+          >
+            <Table size={14} />
+          </button>
+          <button
+            className="btn btn-sm"
+            style={{
+              background: view === "board" ? "var(--primary)" : "var(--surface)",
+              color: view === "board" ? "white" : "var(--text)",
+              border: "none",
+              borderRadius: 0,
+            }}
+            onClick={() => setView("board")}
+          >
+            <Columns size={14} />
+          </button>
+        </div>
         <button className="btn btn-secondary btn-sm" onClick={() => refetch()}>
           Refresh
         </button>
@@ -113,6 +158,8 @@ export default function Applications() {
             </p>
           )}
         </div>
+      ) : view === "board" ? (
+        <BoardView applications={items} onSelect={(id) => setSelectedId(id)} />
       ) : (
         <>
           <div className="table-wrap">

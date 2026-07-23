@@ -8,6 +8,7 @@ import type {
   JobUpdate,
   ApplicationCreate,
   EventCreate,
+  FollowUpAction,
   ApplicationEvent,
 } from "./types";
 
@@ -122,6 +123,16 @@ export function updateApplication(
 ): Promise<ApplicationDetail> {
   return request<ApplicationDetail>(`/applications/${id}`, {
     method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+
+export function followUpApplication(
+  id: number,
+  body: FollowUpAction,
+): Promise<ApplicationDetail> {
+  return request<ApplicationDetail>(`/applications/${id}/follow-up`, {
+    method: "POST",
     body: JSON.stringify(body),
   });
 }

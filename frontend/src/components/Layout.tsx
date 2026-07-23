@@ -1,11 +1,19 @@
-import { NavLink, Outlet } from "react-router-dom";
-import { LayoutDashboard, ListChecks, RefreshCw, Wifi, WifiOff } from "lucide-react";
+import { NavLink, Outlet, useLocation } from "react-router-dom";
+import { LayoutDashboard, ListChecks, RefreshCw, Wifi, WifiOff, Database, CalendarCheck } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useState, useEffect } from "react";
 import { fetchDashboard } from "../api/client";
 
+const PAGE_TITLES: Record<string, string> = {
+  "/": "Dashboard",
+  "/applications": "Applications",
+  "/job-pool": "Job Pool",
+  "/follow-ups": "Follow-ups",
+};
+
 export default function Layout() {
   const qc = useQueryClient();
+  const loc = useLocation();
   const [ts, setTs] = useState(new Date());
   const [online, setOnline] = useState(true);
 
@@ -37,9 +45,17 @@ export default function Layout() {
             <LayoutDashboard size={16} />
             Dashboard
           </NavLink>
+          <NavLink to="/job-pool">
+            <Database size={16} />
+            Job Pool
+          </NavLink>
           <NavLink to="/applications">
             <ListChecks size={16} />
             Applications
+          </NavLink>
+          <NavLink to="/follow-ups">
+            <CalendarCheck size={16} />
+            Follow-ups
           </NavLink>
         </nav>
       </aside>
@@ -47,9 +63,7 @@ export default function Layout() {
         <header className="topbar">
           <div className="topbar-left">
             <span style={{ color: "var(--text-secondary)", fontWeight: 400, fontSize: 14 }}>
-              {window.location.pathname === "/applications"
-                ? "Applications"
-                : "Dashboard"}
+              {PAGE_TITLES[loc.pathname] || "Job Copilot"}
             </span>
           </div>
           <div className="topbar-right">

@@ -69,6 +69,7 @@ export interface Job {
   recommendation: string | null;
   greeting_text: string | null;
   has_application: boolean;
+  application_id: number | null;
   application_stage: string | null;
   score: JobScore | null;
 }
@@ -143,4 +144,10 @@ export interface EventCreate {
   from_stage?: string;
   to_stage?: string;
   content?: string;
+}
+
+export interface FollowUpAction {
+  content?: string;
+  next_follow_up_at?: string | null;
+  stage?: string;
 }

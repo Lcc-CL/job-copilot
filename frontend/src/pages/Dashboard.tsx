@@ -1,6 +1,7 @@
 import { useDashboard, useFollowUps } from "../hooks/queries";
 import { AlertTriangle, Calendar, ChevronRight, Loader2 } from "lucide-react";
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import DetailDrawer from "../components/DetailDrawer";
 
@@ -33,7 +34,27 @@ function pct(n: number): string {
 export default function Dashboard() {
   const dash = useDashboard();
   const fu = useFollowUps();
+  const navigate = useNavigate();
   const [selectedAppId, setSelectedAppId] = useState<number | null>(null);
+
+  const handleMetricClick = (key: string) => {
+    const stageMap: Record<string, string> = {
+      greeting_ready: "GREETING_READY",
+      contacted: "CONTACTED",
+      applied: "APPLIED",
+      replied: "REPLIED",
+      interviews: "INTERVIEW",
+      offers: "OFFER",
+    };
+    const stage = stageMap[key];
+    if (stage) {
+      navigate(`/applications?stage=${stage}`);
+    } else if (key === "due_today") {
+      navigate("/follow-ups");
+    } else if (key === "overdue") {
+      navigate("/follow-ups");
+    }
+  };
 
   if (dash.isLoading && fu.isLoading) {
     return (
@@ -70,7 +91,13 @@ export default function Dashboard() {
       {/* Metric cards */}
       <div className="card-grid">
         {METRICS.map(({ key, label }) => (
-          <div className="stat-card" key={key}>
+          <div
+            className="stat-card"
+            key={key}
+            onClick={() => handleMetricClick(key)}
+            style={{ cursor: key !== "total_jobs" ? "pointer" : undefined }}
+            title={key !== "total_jobs" ? `View ${label}` : undefined}
+          >
             <div className="stat-card-label">{label}</div>
             <div className="stat-card-value">{Number((d as unknown as Record<string, unknown>)[key]) ?? 0}</div>
           </div>

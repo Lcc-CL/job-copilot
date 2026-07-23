@@ -5,8 +5,10 @@ import {
   fetchApplications,
   fetchApplication,
   updateApplication,
+  createApplication,
+  followUpApplication,
 } from "../api/client";
-import type { ApplicationUpdate } from "../api/types";
+import type { ApplicationUpdate, ApplicationCreate, FollowUpAction } from "../api/types";
 
 // ---- Dashboard ----
 
@@ -69,6 +71,33 @@ export function useUpdateApplication() {
       qc.invalidateQueries({ queryKey: ["application"] });
       qc.invalidateQueries({ queryKey: ["dashboard"] });
       qc.invalidateQueries({ queryKey: ["followUps"] });
+    },
+  });
+}
+
+export function useCreateApplication() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ jobId, body }: { jobId: number; body: ApplicationCreate }) =>
+      createApplication(jobId, body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["jobs"] });
+      qc.invalidateQueries({ queryKey: ["applications"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+  });
+}
+
+export function useFollowUp() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, body }: { id: number; body: FollowUpAction }) =>
+      followUpApplication(id, body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["followUps"] });
+      qc.invalidateQueries({ queryKey: ["applications"] });
+      qc.invalidateQueries({ queryKey: ["application"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
     },
   });
 }
