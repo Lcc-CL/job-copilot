@@ -22,7 +22,13 @@ def _default_db_url() -> str:
 
 
 def _get_database_url() -> str:
-    return os.getenv("DATABASE_URL") or _default_db_url()
+    url = os.getenv("DATABASE_URL") or _default_db_url()
+    # Normalize Zeabur PostgreSQL URI: postgres:// → postgresql+psycopg://
+    if url.startswith("postgres://"):
+        url = "postgresql+psycopg://" + url[len("postgres://"):]
+    elif url.startswith("postgresql://") and "+psycopg" not in url:
+        url = "postgresql+psycopg://" + url[len("postgresql://"):]
+    return url
 
 
 def _engine_kwargs(url: str) -> dict:
