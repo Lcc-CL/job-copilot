@@ -53,13 +53,23 @@ def _session_path(platform: str = "boss") -> Path:
     return SESSION_DIR / f"{platform}.json"
 
 
-def _launch(playwright, storage_state: Optional[Path]):
-    browser = playwright.chromium.launch(headless=False)
+# 反自动化检测的浏览器启动参数（防止 Boss 直聘等网站白屏拦截）
+_ANTI_DETECT_ARGS = [
+    "--disable-blink-features=AutomationControlled",
+    "--disable-features=IsolateOrigins,site-per-process",
+    "--no-sandbox",
+    "--disable-setuid-sandbox",
+]
+
+
+def _launch(playwright, storage_state: Optional[Path], headless: bool = False):
+    browser = playwright.chromium.launch(headless=headless, args=_ANTI_DETECT_ARGS)
     context = browser.new_context(
         storage_state=str(storage_state) if storage_state and storage_state.exists() else None,
         viewport={"width": 1440, "height": 900},
         locale="zh-CN",
     )
+    # 反检测启动参数已足够，不再篡改 navigator（Boss 直聘会检测 webdriver 被篡改并白屏）
     return browser, context
 
 
@@ -96,13 +106,28 @@ def login(timeout_sec: int = 300) -> None:
         print(f"登录成功后会自动检测并保存，无需回终端操作（限时 {timeout_sec // 60} 分钟，期间请勿关闭浏览器）…")
         deadline = time.time() + timeout_sec
         ok = False
+        last_cookie_dump = 0.0
         while time.time() < deadline:
             time.sleep(2)
             try:
                 if page.is_closed():
+                    print("⚠ 浏览器窗口已被关闭")
                     break
             except Exception:
                 break
+
+            # 每 10 秒输出一次调试信息
+            now = time.time()
+            if now - last_cookie_dump >= 10:
+                last_cookie_dump = now
+                try:
+                    cookies = context.cookies()
+                    cookie_names = [c.get("name") for c in cookies if c.get("value")]
+                    print(f"  [调试] 当前页面: {page.url[:80]}")
+                    print(f"  [调试] 当前 cookie: {cookie_names}")
+                except Exception:
+                    pass
+
             if _is_logged_in(context):
                 ok = True
                 break

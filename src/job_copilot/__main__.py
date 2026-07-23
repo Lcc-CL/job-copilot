@@ -31,6 +31,7 @@ COMMANDS = [
     ("score",     "P1", "LLM 精排：对粗筛候选做 Block A-G 评估"),
     ("enrich",    "P1", "补采 Top N 岗位 JD 详情 + 二次精排（--fetch --rescore）"),
     ("greet",     "P2", "为'感兴趣'岗位生成定制招呼语"),
+    ("web",       "P2", "投递管理 API（init-db / import-tracking / serve）"),
     ("apply",     "P2", "半自动投递（每条需确认）"),
     ("inbox",     "P3", "回读HR消息，起草回复，收集邀约"),
     ("stats",     "P3", "已读不回/回复/邀约率分组统计"),
@@ -38,7 +39,7 @@ COMMANDS = [
     ("decide",    "P3", "生成个人求职决策报告"),
 ]
 
-IMPLEMENTED = {"status", "collect", "clean", "market", "skills", "match", "dashboard", "evalset", "score", "enrich", "eval", "greet", "stats"}
+IMPLEMENTED = {"status", "collect", "clean", "market", "skills", "match", "dashboard", "evalset", "score", "enrich", "eval", "greet", "web", "stats"}
 
 
 def cmd_status() -> None:
@@ -134,6 +135,15 @@ def main() -> None:
             p_collect.add_argument("--city", help="只采集该城市（默认用配置全部）")
             p_collect.add_argument("paths", nargs="*",
                                    help="import 用：待导入的 JSON 文件或目录（默认扫 ~/Downloads）")
+        elif name == "web":
+            p_web = sub.add_parser(name, help=desc)
+            p_web.add_argument("action", choices=["init-db", "import-tracking", "serve"],
+                               help="init-db=初始化/迁移数据库; "
+                                    "import-tracking=导入投递追踪CSV; "
+                                    "serve=启动 API 服务")
+            p_web.add_argument("--csv", help="import-tracking: CSV 路径或目录（默认取最新）")
+            p_web.add_argument("--host", default="127.0.0.1", help="serve: 绑定地址")
+            p_web.add_argument("--port", type=int, default=8000, help="serve: 端口")
         else:
             sub.add_parser(name, help=f"[{phase}] {desc}")
 
@@ -183,6 +193,16 @@ def main() -> None:
     elif args.command == "greet":
         from . import greet
         print(greet.generate(min_fit=args.min_fit, limit=args.limit))
+    elif args.command == "web":
+        from . import web as web_mod
+        if args.action == "init-db":
+            print(web_mod.cmd_init_db())
+        elif args.action == "import-tracking":
+            csv_path = getattr(args, "csv", None) or "data/exports"
+            print(web_mod.cmd_import_tracking(csv_path))
+        elif args.action == "serve":
+            web_mod.cmd_serve(host=getattr(args, "host", "127.0.0.1"),
+                            port=getattr(args, "port", 8000))
     elif args.command == "stats":
         from . import stats
         print(stats.report())

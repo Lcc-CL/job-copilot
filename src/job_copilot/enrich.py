@@ -138,7 +138,7 @@ def fetch_details(candidates: list[dict]) -> list[FetchResult]:
     """用 Playwright 逐条获取 Top N 岗位的详情页 JD（headless，复用登录 cookie）。"""
     from playwright.sync_api import sync_playwright
     from .collect_boss import (
-        _session_path, _is_logged_in,
+        _session_path, _is_logged_in, _launch,
         _hit_security_check, _wait_if_security_check,
     )
 
@@ -154,12 +154,7 @@ def fetch_details(candidates: list[dict]) -> list[FetchResult]:
     hi = float(cfg.collect.get("max_interval_sec", 8))
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        context = browser.new_context(
-            storage_state=str(state) if state.exists() else None,
-            viewport={"width": 1440, "height": 900},
-            locale="zh-CN",
-        )
+        browser, context = _launch(p, state, headless=True)
         page = context.new_page()
 
         for i, r in enumerate(candidates):

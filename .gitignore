@@ -3,6 +3,7 @@ config/config.toml
 config/storage_state*.json
 data/sessions/
 .claude/settings.local.json
+.env
 
 # ===== 个人数据（简历/画像/采集/标注/报告），绝不入库 =====
 config/profile.md
@@ -12,12 +13,16 @@ reports/*
 !reports/.gitkeep
 skills/.claude/
 data/jobcopilot.db
+data/jobcopilot.db-shm
+data/jobcopilot.db-wal
 data/raw/*
 data/clean/*
 data/exports/*
 data/eval/
 data/jd/
 data/imports/
+data/enriched/
+data/analysis/
 !data/**/.gitkeep
 
 # ===== 本地向量模型（143MB，跑 tools/download-model.sh 获取）=====

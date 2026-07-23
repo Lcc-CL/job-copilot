@@ -14,8 +14,13 @@ import glob
 import json
 from datetime import date
 
+from datetime import datetime, timezone
 from .config import RESUME_DIR, REPORTS_DIR, DATA_DIR, load_config
 from . import db, llm, score as score_mod
+
+
+def _now_utc() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _group_of(salary_max) -> str:
@@ -109,6 +114,22 @@ def generate(min_fit: int = 4, limit: int = 20) -> str:
             greeting = out.get("greeting", "").strip()
         except Exception as e:
             greeting = f"[生成失败：{type(e).__name__}]"
+
+        # 回写 job.greeting_text（供 API 查询）
+        try:
+            from .database import get_session
+            from .models import Job
+            from sqlalchemy import update as sa_update
+            sess = get_session()
+            sess.execute(
+                sa_update(Job).where(Job.id == r["id"]).values(
+                    greeting_text=greeting, updated_at=_now_utc()
+                )
+            )
+            sess.commit()
+            sess.close()
+        except Exception:
+            pass  # greeting_text 写入失败不影响主流程
         print(f"  [{i}/{len(rows)}] [{r['_group']}] {r.get('company','')[:12]} ✓")
         L.append(f"## {i}. {r.get('title','')} @ {r.get('company','')}")
         L.append(f"- 薪资 {r.get('salary_text','')}｜经验 {r.get('experience','')}｜fit {r.get('fit_score')}｜"
