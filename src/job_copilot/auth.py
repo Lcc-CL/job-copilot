@@ -42,10 +42,16 @@ class AuthConfig:
     @classmethod
     def from_env(cls) -> AuthConfig:
         env = os.getenv("APP_ENV", "development")
-        username = os.getenv("APP_USERNAME", "")
-        password_hash = os.getenv("APP_PASSWORD_HASH", "")
-        session_secret = os.getenv("SESSION_SECRET", "")
+        username = (os.getenv("APP_USERNAME", "") or "").strip()
+        raw_hash = (os.getenv("APP_PASSWORD_HASH", "") or "").strip()
+        session_secret = (os.getenv("SESSION_SECRET", "") or "").strip()
         session_max_age = int(os.getenv("SESSION_MAX_AGE_SECONDS", "604800"))
+
+        # Normalize hash: strip surrounding quotes, normalize line breaks
+        if raw_hash and len(raw_hash) > 2:
+            if (raw_hash[0] == raw_hash[-1]) and raw_hash[0] in ('"', "'"):
+                raw_hash = raw_hash[1:-1]
+        password_hash = raw_hash.replace("\\n", "").replace("\\r", "")
 
         if env == "production":
             missing = []
@@ -67,13 +73,23 @@ class AuthConfig:
         if not session_secret:
             session_secret = secrets.token_hex(32)
 
-        return cls(
+        cfg = cls(
             username=username or "admin",
             password_hash=password_hash or hash_password("admin"),
             session_secret=session_secret,
             session_max_age=session_max_age,
             env=env,
         )
+
+        # Startup diagnostic (safe - no hash output)
+        import sys
+        print(f"[auth] env={cfg.env} user={cfg.username} "
+              f"hash_set={'yes' if password_hash else 'no'} "
+              f"hash_len={len(cfg.password_hash)} "
+              f"hash_prefix={'$argon2' if cfg.password_hash.startswith('$argon2') else 'other'}",
+              file=sys.stderr)
+
+        return cfg
 
 
 _auth_config: Optional[AuthConfig] = None
@@ -132,11 +148,13 @@ def register_auth_routes(app):
     @app.post("/api/auth/login")
     async def auth_login(body: LoginBody, request: Request):
         cfg = get_auth_config()
-        if body.username != cfg.username:
+        if body.username.strip() != cfg.username:
             raise HTTPException(status_code=401, detail="Invalid credentials")
         try:
             ok = verify_password(body.password, cfg.password_hash)
-        except Exception:
+        except Exception as e:
+            import sys
+            print(f"[auth] verify error: {type(e).__name__}", file=sys.stderr)
             ok = False
         if not ok:
             raise HTTPException(status_code=401, detail="Invalid credentials")
@@ -153,7 +171,16 @@ def register_auth_routes(app):
 
 # ---- CLI helper ----
 
-def cmd_hash_password(password: str) -> str:
-    """打印密码 hash（用于生成 APP_PASSWORD_HASH 环境变量）。"""
+def cmd_hash_password(password: str = "") -> str:
+    """生成密码 hash（交互式 getpass 或传参）。"""
+    if not password:
+        import getpass
+        pw1 = getpass.getpass("New password: ")
+        if len(pw1) < 10:
+            return "ERROR: Password must be at least 10 characters"
+        pw2 = getpass.getpass("Confirm password: ")
+        if pw1 != pw2:
+            return "ERROR: Passwords do not match"
+        password = pw1
     h = hash_password(password)
-    return f"APP_PASSWORD_HASH={h}"
+    return h
