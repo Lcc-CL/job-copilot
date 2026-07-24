@@ -22,7 +22,7 @@ echo "[entrypoint] Database URL configured: yes"
 # Wait for database to be ready (up to 90s)
 echo "[entrypoint] Waiting for database..."
 for i in $(seq 1 30); do
-  if python -c "
+  result=$(python -c "
 import os, sys
 url = os.environ.get('DATABASE_URL', '')
 if url.startswith('postgres://'):
@@ -34,12 +34,16 @@ try:
     e = create_engine(url, connect_args={'connect_timeout': 3})
     with e.connect() as c:
         c.execute(text('SELECT 1'))
-    sys.exit(0)
-except Exception:
-    sys.exit(1)
-" 2>/dev/null; then
+    print('OK')
+except Exception as ex:
+    print(type(ex).__name__)
+" 2>/dev/null)
+  if [ "$result" = "OK" ]; then
     echo "[entrypoint] Database is ready"
     break
+  fi
+  if [ -n "$result" ]; then
+    echo "[entrypoint] DB attempt $i/30: $result"
   fi
   if [ "$i" -eq 30 ]; then
     echo "[entrypoint] ERROR: Database not ready after 90s" >&2
