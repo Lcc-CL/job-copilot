@@ -126,6 +126,7 @@ export interface ApplicationUpdate {
 
 export interface JobUpdate {
   jd_status?: string;
+  jd_text?: string;
   recommendation?: string;
   greeting_text?: string;
   notes?: string;

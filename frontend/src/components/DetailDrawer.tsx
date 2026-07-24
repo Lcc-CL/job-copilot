@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { stageColor, fmtDate } from "../pages/Dashboard";
 import ResumeTailor from "./ResumeTailor";
+import { updateJob } from "../api/client";
 import type { ApplicationUpdate } from "../api/types";
 
 const STAGES = [
@@ -25,6 +26,32 @@ export default function DetailDrawer({ applicationId, onClose }: Props) {
   const [form, setForm] = useState<ApplicationUpdate>({});
   const [toast, setToast] = useState<{ type: "success" | "error"; msg: string } | null>(null);
   const [copied, setCopied] = useState(false);
+  const [jdEditing, setJdEditing] = useState(false);
+  const [jdText, setJdText] = useState("");
+  const [jdSaving, setJdSaving] = useState(false);
+  const [jdLen, setJdLen] = useState(0);
+
+  useEffect(() => {
+    if (data) {
+      fetch(`/api/jobs/${data.job_pk}`, { credentials: "include" })
+        .then(r => r.json()).then(j => {
+          setJdLen((j.jd_text || "").length);
+          setJdText(j.jd_text || "");
+        }).catch(() => {});
+    }
+  }, [data]);
+
+  async function handleJdSave() {
+    if (!data) return;
+    setJdSaving(true);
+    try {
+      await updateJob(data.job_pk, { jd_text: jdText });
+      setJdLen(jdText.length);
+      setJdEditing(false);
+      showToast("success", "JD saved");
+    } catch { showToast("error", "Failed to save JD"); }
+    finally { setJdSaving(false); }
+  }
 
   useEffect(() => {
     if (data) {
@@ -110,6 +137,37 @@ export default function DetailDrawer({ applicationId, onClose }: Props) {
                 <Field label="Location" value={data.job_city} />
                 <Field label="Salary" value={data.job_salary_text} />
                 <Field label="JD Status" value={data.job_jd_status} />
+                <div style={{ marginTop: 8 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-secondary)" }}>
+                      JD Text ({jdLen} chars)
+                    </span>
+                    {!jdEditing ? (
+                      <button className="btn btn-ghost btn-sm" onClick={() => setJdEditing(true)}>
+                        <Edit3 size={12} /> Edit
+                      </button>
+                    ) : (
+                      <div style={{ display: "flex", gap: 4 }}>
+                        <button className="btn btn-secondary btn-sm" onClick={() => setJdEditing(false)}>Cancel</button>
+                        <button className="btn btn-primary btn-sm" onClick={handleJdSave} disabled={jdSaving}>
+                          {jdSaving ? <Loader2 size={12} /> : <Save size={12} />} Save
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  {jdEditing ? (
+                    <textarea
+                      value={jdText}
+                      onChange={(e) => setJdText(e.target.value)}
+                      style={{ width: "100%", minHeight: 120, padding: 8, border: "1px solid var(--border)", borderRadius: 6, fontSize: 12, fontFamily: "inherit" }}
+                      placeholder="Paste full job description here (responsibilities + requirements)..."
+                    />
+                  ) : (
+                    <div style={{ fontSize: 12, color: jdLen > 0 ? "var(--text-secondary)" : "var(--danger)", maxHeight: 80, overflow: "auto", whiteSpace: "pre-wrap" }}>
+                      {jdLen > 0 ? (jdText || "").slice(0, 300) + (jdLen > 300 ? "..." : "") : "No JD text. Click Edit to paste job description."}
+                    </div>
+                  )}
+                </div>
                 <Field label="Original Score" value={data.job_original_score} />
                 <Field label="Enriched Score" value={data.job_enriched_score} />
                 <Field
