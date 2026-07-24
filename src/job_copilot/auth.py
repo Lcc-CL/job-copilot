@@ -134,7 +134,11 @@ def register_auth_routes(app):
         cfg = get_auth_config()
         if body.username != cfg.username:
             raise HTTPException(status_code=401, detail="Invalid credentials")
-        if not verify_password(body.password, cfg.password_hash):
+        try:
+            ok = verify_password(body.password, cfg.password_hash)
+        except Exception:
+            ok = False
+        if not ok:
             raise HTTPException(status_code=401, detail="Invalid credentials")
         request.session["user"] = body.username
         return {"username": body.username}
