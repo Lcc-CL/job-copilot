@@ -726,6 +726,27 @@ def follow_up_action(application_id: int, body: FollowUpAction):
 
 
 # ============================================================
+# SPA fallback (production: serve React frontend)
+# ============================================================
+
+if FRONTEND_DIR.exists():
+    assets_dir = FRONTEND_DIR / "assets"
+    if assets_dir.exists():
+        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
+
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str = ""):
+        # /api paths not handled here — already matched by API routes
+        file_path = FRONTEND_DIR / full_path
+        if file_path.is_file():
+            return FileResponse(str(file_path))
+        index = FRONTEND_DIR / "index.html"
+        if index.exists():
+            return HTMLResponse(index.read_text(encoding="utf-8"))
+        return HTMLResponse("Frontend not built.", status_code=404)
+
+
+# ============================================================
 # CLI 支持
 # ============================================================
 
@@ -771,37 +792,8 @@ def cmd_import_tracking(csv_path: str) -> str:
 
 
 def cmd_serve(host: str = "127.0.0.1", port: int = 8000) -> None:
-    """启动 API 服务（production 托管前端静态文件）。"""
+    """启动 API 服务（SPA fallback 已在模块级别注册）。"""
     import uvicorn
-
-    # Auto-init DB on startup (idempotent)
-    try:
-        init_db(drop_applications=False)
-    except Exception as e:
-        print(f"⚠ DB init warning: {e}")
-
-    if FRONTEND_DIR.exists():
-        # Mount static assets at /assets/
-        assets_dir = FRONTEND_DIR / "assets"
-        if assets_dir.exists():
-            app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
-        # Mount favicon etc.
-        for static_file in FRONTEND_DIR.glob("*"):
-            if static_file.is_file() and static_file.suffix in (".svg", ".ico", ".png"):
-                pass  # handled by SPA fallback below
-
-        # SPA fallback: serve index.html for all non-/api routes
-        @app.get("/{full_path:path}")
-        async def serve_spa(full_path: str = ""):
-            file_path = FRONTEND_DIR / full_path
-            # If the path is a real file, serve it
-            if file_path.is_file():
-                return FileResponse(str(file_path))
-            # Otherwise serve index.html for SPA routing
-            index = FRONTEND_DIR / "index.html"
-            if index.exists():
-                return HTMLResponse(index.read_text(encoding="utf-8"))
-            return HTMLResponse("Frontend not built. Run: cd frontend && npm run build", status_code=404)
 
     print(f"Job Copilot API → http://{host}:{port}")
     if os.getenv("APP_ENV") != "production":
