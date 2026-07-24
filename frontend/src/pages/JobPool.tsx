@@ -1,9 +1,11 @@
 import { useState, useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import { fetchJobs } from "../api/client";
 import { useCreateApplication } from "../hooks/queries";
 import { AlertTriangle, Loader2, Search, ExternalLink, Plus, Check } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { translateRecommendation } from "../i18n/helpers";
 import type { Job } from "../api/types";
 
 const PAGE_SIZE = 30;
@@ -19,6 +21,7 @@ function recBadge(rec: string): string {
 }
 
 export default function JobPool() {
+  const { t } = useTranslation();
   const [keyword, setKeyword] = useState("");
   const [recommendation, setRecommendation] = useState("");
   const [jdStatus, setJdStatus] = useState("");
@@ -66,7 +69,7 @@ export default function JobPool() {
         },
       });
       setAddedIds((prev) => new Set(prev).add(job.id));
-      setMessage({ text: "Added to tracking", type: "success" });
+      setMessage({ text: t("jobPool.addedToast"), type: "success" });
       setTimeout(() => setMessage(null), 2000);
       job.has_application = true;
       job.application_id = result.id;
@@ -143,7 +146,7 @@ export default function JobPool() {
                     <td>{j.enriched_score ?? j.original_score ?? "—"}</td>
                     <td>
                       {j.recommendation ? (
-                        <span className={`badge ${recBadge(j.recommendation)}`}>{j.recommendation}</span>
+                        <span className={`badge ${recBadge(j.recommendation)}`}>{translateRecommendation(t, j.recommendation)}</span>
                       ) : "—"}
                     </td>
                     <td>{j.jd_status === "PENDING_JD" ? <span className="badge badge-gray">PENDING_JD</span> : "✓"}</td>
