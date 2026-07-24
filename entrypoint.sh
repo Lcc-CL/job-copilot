@@ -24,9 +24,14 @@ echo "[entrypoint] Waiting for database..."
 for i in $(seq 1 30); do
   if python -c "
 import os, sys
+url = os.environ.get('DATABASE_URL', '')
+if url.startswith('postgres://'):
+    url = 'postgresql+psycopg://' + url[len('postgres://'):]
+elif url.startswith('postgresql://') and '+psycopg' not in url:
+    url = 'postgresql+psycopg://' + url[len('postgresql://'):]
 from sqlalchemy import create_engine, text
 try:
-    e = create_engine(os.environ['DATABASE_URL'], connect_args={'connect_timeout': 3})
+    e = create_engine(url, connect_args={'connect_timeout': 3})
     with e.connect() as c:
         c.execute(text('SELECT 1'))
     sys.exit(0)
