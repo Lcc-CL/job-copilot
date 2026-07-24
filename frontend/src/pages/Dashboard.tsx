@@ -1,6 +1,7 @@
 import { useDashboard, useFollowUps } from "../hooks/queries";
 import { AlertTriangle, Calendar, ChevronRight, Loader2 } from "lucide-react";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import DetailDrawer from "../components/DetailDrawer";
@@ -32,6 +33,7 @@ function pct(n: number): string {
 }
 
 export default function Dashboard() {
+  const { t } = useTranslation();
   const dash = useDashboard();
   const fu = useFollowUps();
   const navigate = useNavigate();
@@ -68,7 +70,7 @@ export default function Dashboard() {
     return (
       <div className="error-state">
         <AlertTriangle size={24} />
-        <p>Failed to load dashboard data.</p>
+        <p>{t("common.networkError")}</p>
         <button className="btn btn-primary" onClick={() => { dash.refetch(); fu.refetch(); }}>
           Retry
         </button>
@@ -106,9 +108,9 @@ export default function Dashboard() {
 
       {/* Rates */}
       <div className="section" style={{ marginTop: 16 }}>
-        <div className="section-title">Conversion Rates</div>
+        <div className="section-title">{t("dashboard.conversionRates")}</div>
         <div className="rate-row">
-          <span className="rate-label">Response Rate</span>
+          <span className="rate-label">{t("dashboard.responseRate")}</span>
           <div className="rate-bar-bg">
             <div
               className="rate-bar-fg"
@@ -126,7 +128,7 @@ export default function Dashboard() {
           <span className="rate-value">{pct(d.response_rate)}</span>
         </div>
         <div className="rate-row">
-          <span className="rate-label">Interview Rate</span>
+          <span className="rate-label">{t("dashboard.interviewRate")}</span>
           <div className="rate-bar-bg">
             <div
               className="rate-bar-fg"
@@ -147,10 +149,10 @@ export default function Dashboard() {
 
       {/* Stage chart */}
       <div className="section">
-        <div className="section-title">Stage Distribution</div>
+        <div className="section-title">{t("dashboard.stageDistribution")}</div>
         {chartData.every((c) => c.count === 0) ? (
           <div className="empty-state" style={{ padding: 24 }}>
-            <p>No application data yet. Start tracking applications to see the pipeline.</p>
+            <p>{t("dashboard.noAppData")}</p>
           </div>
         ) : (
           <ResponsiveContainer width="100%" height={200}>
@@ -195,7 +197,7 @@ export default function Dashboard() {
         </div>
         {followUps.length === 0 ? (
           <div className="empty-state" style={{ padding: 24 }}>
-            <p>No follow-ups due. Great job!</p>
+            <p>{t("dashboard.noFollowUps")}</p>
           </div>
         ) : (
           <table className="data-table">

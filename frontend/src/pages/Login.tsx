@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { useAuth } from "../components/AuthProvider";
 import { ListChecks, Loader2, AlertTriangle, WifiOff } from "lucide-react";
 
@@ -7,6 +8,7 @@ export default function Login() {
   const { login, user } = useAuth();
   const navigate = useNavigate();
   const loc = useLocation();
+  const { t } = useTranslation();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -34,7 +36,7 @@ export default function Login() {
       if (msg.includes("NetworkError") || msg.includes("Failed to fetch")) {
         setOffline(true);
       } else {
-        setError(msg.includes("401") ? "Invalid credentials" : msg);
+        setError(msg.includes("401") ? t("login.invalidCredentials") : msg);
       }
     } finally {
       setLoading(false);
@@ -52,9 +54,9 @@ export default function Login() {
       }}>
         <div style={{ textAlign: "center", marginBottom: 24 }}>
           <ListChecks size={28} color="var(--primary)" style={{ marginBottom: 8 }} />
-          <h1 style={{ fontSize: 20, fontWeight: 700 }}>Job Copilot</h1>
+          <h1 style={{ fontSize: 20, fontWeight: 700 }}>{t("login.title")}</h1>
           <p style={{ fontSize: 13, color: "var(--text-secondary)", marginTop: 4 }}>
-            Personal job tracking CRM
+            {t("login.subtitle")}
           </p>
         </div>
 
@@ -64,7 +66,7 @@ export default function Login() {
             display: "flex", alignItems: "center", gap: 8, fontSize: 13,
           }}>
             <WifiOff size={16} color="var(--danger)" />
-            API server is not reachable. Check that the server is running.
+            {t("login.apiUnavailable")}
           </div>
         )}
 
@@ -80,11 +82,11 @@ export default function Login() {
 
         <form onSubmit={handleSubmit}>
           <div className="form-group">
-            <label>Username</label>
+            <label>{t("login.username")}</label>
             <input value={username} onChange={(e) => setUsername(e.target.value)} autoFocus />
           </div>
           <div className="form-group">
-            <label>Password</label>
+            <label>{t("login.password")}</label>
             <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
           </div>
           <button
@@ -93,7 +95,7 @@ export default function Login() {
             disabled={loading || !username || !password}
             style={{ width: "100%", marginTop: 8, justifyContent: "center" }}
           >
-            {loading ? <Loader2 size={16} /> : "Sign in"}
+            {loading ? <Loader2 size={16} /> : t("login.signIn")}
           </button>
         </form>
       </div>

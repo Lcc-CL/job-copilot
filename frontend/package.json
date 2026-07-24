@@ -16,9 +16,11 @@
     "@tanstack/react-query": "^5.101.4",
     "@tanstack/react-table": "^8.21.3",
     "date-fns": "^4.4.0",
+    "i18next": "^26.3.6",
     "lucide-react": "^1.26.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
+    "react-i18next": "^17.0.11",
     "react-router-dom": "^7.18.1",
     "recharts": "^3.10.0"
   },
