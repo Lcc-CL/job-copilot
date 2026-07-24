@@ -1,31 +1,25 @@
 import { useDashboard, useFollowUps } from "../hooks/queries";
 import { AlertTriangle, Calendar, ChevronRight, Loader2 } from "lucide-react";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import DetailDrawer from "../components/DetailDrawer";
+import { translateStage } from "../i18n/helpers";
 
-const METRICS: { key: string; label: string }[] = [
-  { key: "total_jobs", label: "Total Jobs" },
-  { key: "greeting_ready", label: "Greeting Ready" },
-  { key: "contacted", label: "Contacted" },
-  { key: "applied", label: "Applied" },
-  { key: "replied", label: "Replied" },
-  { key: "interviews", label: "Interviews" },
-  { key: "offers", label: "Offers" },
-  { key: "due_today", label: "Due Today" },
-  { key: "overdue", label: "Overdue" },
-];
-
-const STAGE_LABELS: Record<string, string> = {
-  greeting_ready: "Greeting Ready",
-  contacted: "Contacted",
-  applied: "Applied",
-  replied: "Replied",
-  interviews: "Interviews",
-  offers: "Offers",
-  rejected: "Rejected",
+const METRIC_KEYS = ["total_jobs","greeting_ready","contacted","applied","replied","interviews","offers","due_today","overdue"] as const;
+const METRIC_I18N: Record<string, string> = {
+  total_jobs: "dashboard.totalJobs", greeting_ready: "dashboard.greetingReady",
+  contacted: "dashboard.contacted", applied: "dashboard.applied",
+  replied: "dashboard.replied", interviews: "dashboard.interviews",
+  offers: "dashboard.offers", due_today: "dashboard.dueToday", overdue: "dashboard.overdue",
+};
+const STAGE_DATA_KEYS = ["greeting_ready","contacted","applied","replied","interviews","offers","rejected"];
+const STAGE_I18N: Record<string, string> = {
+  greeting_ready: "dashboard.greetingReady", contacted: "dashboard.contacted",
+  applied: "dashboard.applied", replied: "dashboard.replied",
+  interviews: "dashboard.interviews", offers: "dashboard.offers",
+  rejected: "stage.REJECTED",
 };
 
 function pct(n: number): string {
@@ -39,41 +33,46 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const [selectedAppId, setSelectedAppId] = useState<number | null>(null);
 
+  const metricLabels = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const k of METRIC_KEYS) m[k] = t(METRIC_I18N[k]);
+    return m;
+  }, [t]);
+
+  const stageLabels = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const k of STAGE_DATA_KEYS) m[k] = t(STAGE_I18N[k]);
+    return m;
+  }, [t]);
+
+  const chartStageMap = useMemo(() => ({
+    [stageLabels.greeting_ready]: "GREETING_READY",
+    [stageLabels.contacted]: "CONTACTED",
+    [stageLabels.applied]: "APPLIED",
+    [stageLabels.replied]: "REPLIED",
+    [stageLabels.interviews]: "INTERVIEW",
+    [stageLabels.offers]: "OFFER",
+    [stageLabels.rejected]: "REJECTED",
+  }), [stageLabels]);
+
   const handleMetricClick = (key: string) => {
     const stageMap: Record<string, string> = {
-      greeting_ready: "GREETING_READY",
-      contacted: "CONTACTED",
-      applied: "APPLIED",
-      replied: "REPLIED",
-      interviews: "INTERVIEW",
-      offers: "OFFER",
+      greeting_ready: "GREETING_READY", contacted: "CONTACTED",
+      applied: "APPLIED", replied: "REPLIED", interviews: "INTERVIEW", offers: "OFFER",
     };
     const stage = stageMap[key];
-    if (stage) {
-      navigate(`/applications?stage=${stage}`);
-    } else if (key === "due_today") {
-      navigate("/follow-ups");
-    } else if (key === "overdue") {
-      navigate("/follow-ups");
-    }
+    if (stage) navigate(`/applications?stage=${stage}`);
+    else if (key === "due_today" || key === "overdue") navigate("/follow-ups");
   };
 
   if (dash.isLoading && fu.isLoading) {
-    return (
-      <div className="loading-state">
-        <Loader2 size={24} className="spin" /> Loading dashboard…
-      </div>
-    );
+    return <div className="loading-state"><Loader2 size={24} /> {t("common.loading")}</div>;
   }
-
   if (dash.isError || fu.isError) {
     return (
-      <div className="error-state">
-        <AlertTriangle size={24} />
+      <div className="error-state"><AlertTriangle size={24} />
         <p>{t("common.networkError")}</p>
-        <button className="btn btn-primary" onClick={() => { dash.refetch(); fu.refetch(); }}>
-          Retry
-        </button>
+        <button className="btn btn-primary" onClick={() => { dash.refetch(); fu.refetch(); }}>{t("common.retry")}</button>
       </div>
     );
   }
@@ -81,8 +80,8 @@ export default function Dashboard() {
   const d = dash.data!;
   const f = fu.data!;
 
-  const chartData = Object.entries(STAGE_LABELS).map(([k, label]) => ({
-    name: label,
+  const chartData = STAGE_DATA_KEYS.map((k) => ({
+    name: stageLabels[k],
     count: Number((d as unknown as Record<string, unknown>)[k]) || 0,
   }));
 
@@ -92,15 +91,11 @@ export default function Dashboard() {
     <div>
       {/* Metric cards */}
       <div className="card-grid">
-        {METRICS.map(({ key, label }) => (
-          <div
-            className="stat-card"
-            key={key}
+        {METRIC_KEYS.map((key) => (
+          <div className="stat-card" key={key}
             onClick={() => handleMetricClick(key)}
-            style={{ cursor: key !== "total_jobs" ? "pointer" : undefined }}
-            title={key !== "total_jobs" ? `View ${label}` : undefined}
-          >
-            <div className="stat-card-label">{label}</div>
+            style={{ cursor: key !== "total_jobs" ? "pointer" : undefined }}>
+            <div className="stat-card-label">{metricLabels[key]}</div>
             <div className="stat-card-value">{Number((d as unknown as Record<string, unknown>)[key]) ?? 0}</div>
           </div>
         ))}
@@ -166,16 +161,7 @@ export default function Dashboard() {
                 radius={[4, 4, 0, 0]}
                 cursor="pointer"
                 onClick={(data) => {
-                  const stageMap: Record<string, string> = {
-                    "Greeting Ready": "GREETING_READY",
-                    "Contacted": "CONTACTED",
-                    "Applied": "APPLIED",
-                    "Replied": "REPLIED",
-                    "Interviews": "INTERVIEW",
-                    "Offers": "OFFER",
-                    "Rejected": "REJECTED",
-                  };
-                  const stage = stageMap[data?.name as string];
+                  const stage = chartStageMap[data?.name as string];
                   if (stage) navigate(`/applications?stage=${stage}`);
                 }}
               />
@@ -216,7 +202,7 @@ export default function Dashboard() {
                   <td>{a.job_company || "—"}</td>
                   <td>{a.job_title || "—"}</td>
                   <td>
-                    <span className={`badge badge-${stageColor(a.stage)}`}>{a.stage}</span>
+                    <span className={`badge badge-${stageColor(a.stage)}`}>{translateStage(t, a.stage)}</span>
                   </td>
                   <td>{a.next_follow_up_at ? fmtDate(a.next_follow_up_at) : "—"}</td>
                   <td>

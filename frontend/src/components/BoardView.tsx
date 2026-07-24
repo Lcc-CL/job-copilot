@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   DndContext, closestCorners, PointerSensor, useSensor, useSensors,
   type DragEndEvent,
@@ -9,6 +10,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { useUpdateApplication } from "../hooks/queries";
 import { ExternalLink, GripVertical, ChevronDown, ChevronRight } from "lucide-react";
+import { translateStage, translateRecommendation } from "../i18n/helpers";
 import type { ApplicationDetail } from "../api/types";
 
 const COLUMNS = [
@@ -32,6 +34,7 @@ interface Props {
 }
 
 export default function BoardView({ applications, onSelect }: Props) {
+  const { t } = useTranslation();
   const updateApp = useUpdateApplication();
   const [message, setMessage] = useState<{ text: string; type: "success" | "error" } | null>(null);
   const [showClosed, setShowClosed] = useState(false);
@@ -65,11 +68,11 @@ export default function BoardView({ applications, onSelect }: Props) {
     app.stage = newStage;
     try {
       await updateApp.mutateAsync({ id: appId, body: { stage: newStage } });
-      setMessage({ text: `Moved to ${newStage}`, type: "success" });
+      setMessage({ text: `${t("applications.movedToast")} ${translateStage(t, newStage)}`, type: "success" });
       setTimeout(() => setMessage(null), 2000);
     } catch {
       app.stage = app.stage; // revert
-      setMessage({ text: "Move failed", type: "error" });
+      setMessage({ text: t("applications.moveFailed"), type: "error" });
       setTimeout(() => setMessage(null), 3000);
     }
   }
@@ -85,6 +88,7 @@ export default function BoardView({ applications, onSelect }: Props) {
               stage={stage}
               items={items}
               onSelect={onSelect}
+              t={t}
             />
           );
         })}
@@ -98,11 +102,11 @@ export default function BoardView({ applications, onSelect }: Props) {
             onClick={() => setShowClosed(!showClosed)}
           >
             {showClosed ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-            Closed ({closed.length})
+            {t("applications.closed")} ({closed.length})
           </div>
           {showClosed && (
             <div style={{ display: "flex", gap: 12, overflowX: "auto", marginTop: 8 }}>
-              <ClosedColumn items={closed} onSelect={onSelect} />
+              <ClosedColumn items={closed} onSelect={onSelect} t={t} />
             </div>
           )}
         </div>
@@ -123,23 +127,23 @@ const COLUMN_COLORS: Record<string, string> = {
   OFFER: "#e0f2f1",
 };
 
-function Column({ stage, items, onSelect }: { stage: string; items: ApplicationDetail[]; onSelect: (id: number) => void }) {
+function Column({ stage, items, onSelect, t }: { stage: string; items: ApplicationDetail[]; onSelect: (id: number) => void; t: any }) {
   return (
     <div style={{
       minWidth: 210, maxWidth: 210, background: COLUMN_COLORS[stage] || "var(--info-light)",
       borderRadius: "var(--radius)", padding: 8,
     }}>
       <div style={{ fontSize: 12, fontWeight: 600, padding: "4px 8px", marginBottom: 4 }}>
-        {stage} <span style={{ color: "var(--text-secondary)", fontWeight: 400 }}>({items.length})</span>
+        {translateStage(t, stage)} <span style={{ color: "var(--text-secondary)", fontWeight: 400 }}>({items.length})</span>
       </div>
       <SortableContext items={items.map((a) => a.id)} strategy={verticalListSortingStrategy}>
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           {items.map((a) => (
-            <SortableCard key={a.id} app={a} onSelect={onSelect} />
+            <SortableCard key={a.id} app={a} onSelect={onSelect} t={t} />
           ))}
           {items.length === 0 && (
             <div style={{ padding: 12, fontSize: 12, color: "var(--text-secondary)", textAlign: "center" }}>
-              Drop here
+              {t("applications.dropHere")}
             </div>
           )}
         </div>
@@ -148,7 +152,7 @@ function Column({ stage, items, onSelect }: { stage: string; items: ApplicationD
   );
 }
 
-function ClosedColumn({ items, onSelect }: { items: ApplicationDetail[]; onSelect: (id: number) => void }) {
+function ClosedColumn({ items, onSelect, t }: { items: ApplicationDetail[]; onSelect: (id: number) => void; t: any }) {
   return (
     <div style={{ minWidth: 210, maxWidth: 210, background: "var(--info-light)", borderRadius: "var(--radius)", padding: 8 }}>
       {items.map((a) => (
@@ -161,14 +165,14 @@ function ClosedColumn({ items, onSelect }: { items: ApplicationDetail[]; onSelec
           <div style={{ fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {a.job_title || "—"}
           </div>
-          <span className={`badge ${stageBadge(a.stage)}`} style={{ marginTop: 2 }}>{a.stage}</span>
+          <span className={`badge ${stageBadge(a.stage)}`} style={{ marginTop: 2 }}>{translateStage(t, a.stage)}</span>
         </div>
       ))}
     </div>
   );
 }
 
-function SortableCard({ app, onSelect }: { app: ApplicationDetail; onSelect: (id: number) => void }) {
+function SortableCard({ app, onSelect, t }: { app: ApplicationDetail; onSelect: (id: number) => void; t: any }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: app.id });
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -198,7 +202,7 @@ function SortableCard({ app, onSelect }: { app: ApplicationDetail; onSelect: (id
           <div style={{ display: "flex", gap: 4, marginTop: 4, flexWrap: "wrap" }}>
             {app.job_recommendation && (
               <span className={`badge ${recColor(app.job_recommendation)}`} style={{ fontSize: 10 }}>
-                {app.job_recommendation}
+                {translateRecommendation(t, app.job_recommendation)}
               </span>
             )}
             {app.job_enriched_score != null && (

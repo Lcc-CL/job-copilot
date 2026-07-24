@@ -1,10 +1,12 @@
 import { useState, useMemo, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { useApplications } from "../hooks/queries";
 import { AlertTriangle, Loader2, Search, ExternalLink, Table, Columns } from "lucide-react";
 import DetailDrawer from "../components/DetailDrawer";
 import BoardView from "../components/BoardView";
 import { stageColor, fmtDate } from "./Dashboard";
+import { translateRecommendation } from "../i18n/helpers";
 import type { ApplicationDetail } from "../api/types";
 
 const STAGES = [
@@ -28,6 +30,7 @@ function recColor(rec: string): string {
 }
 
 export default function Applications() {
+  const { t } = useTranslation();
   const [searchParams, setSearchParams] = useSearchParams();
   const [keyword, setKeyword] = useState(searchParams.get("keyword") || "");
   const [stage, setStage] = useState(searchParams.get("stage") || "");
@@ -81,7 +84,7 @@ export default function Applications() {
             }
           }}
         >
-          <option value="">All Stages</option>
+          <option value="">{t("applications.allStages")}</option>
           {STAGES.map((s) => (
             <option key={s} value={s}>{s}</option>
           ))}
@@ -90,7 +93,7 @@ export default function Applications() {
           value={recommendation}
           onChange={(e) => { setRecommendation(e.target.value); setPage(0); }}
         >
-          <option value="">All Recommendations</option>
+          <option value="">{t("applications.allRecs")}</option>
           {RECOMMENDATIONS.map((r) => (
             <option key={r} value={r}>{r}</option>
           ))}
@@ -101,7 +104,7 @@ export default function Applications() {
             checked={overdue}
             onChange={(e) => { setOverdue(e.target.checked); setPage(0); }}
           />
-          Overdue only
+          {t("applications.overdueOnly")}
         </label>
         <div style={{ flex: 1 }} />
         <div style={{ display: "flex", border: "1px solid var(--border)", borderRadius: 6, overflow: "hidden" }}>
@@ -141,12 +144,12 @@ export default function Applications() {
       ) : isError ? (
         <div className="error-state">
           <AlertTriangle size={24} />
-          <p>Failed to load applications.</p>
-          <button className="btn btn-primary" onClick={() => refetch()}>Retry</button>
+          <p>{t("common.networkError")}</p>
+          <button className="btn btn-primary" onClick={() => refetch()}>{t("common.retry")}</button>
         </div>
       ) : items.length === 0 ? (
         <div className="empty-state">
-          <p>No applications found.</p>
+          <p>{t("applications.noApplications")}.</p>
           {keyword || stage || recommendation || overdue ? (
             <button className="btn btn-ghost btn-sm" onClick={() => {
               setKeyword(""); setStage(""); setRecommendation(""); setOverdue(false);
@@ -185,6 +188,7 @@ export default function Applications() {
                     key={a.id}
                     app={a}
                     onClick={() => setSelectedId(a.id)}
+                    t={t}
                   />
                 ))}
               </tbody>
@@ -218,7 +222,7 @@ export default function Applications() {
   );
 }
 
-function AppRow({ app, onClick }: { app: ApplicationDetail; onClick: () => void }) {
+function AppRow({ app, onClick, t }: { app: ApplicationDetail; onClick: () => void; t: any }) {
   return (
     <tr className="clickable" onClick={onClick}>
       <td style={{ fontWeight: 500 }}>{app.job_company || "—"}</td>
@@ -229,11 +233,9 @@ function AppRow({ app, onClick }: { app: ApplicationDetail; onClick: () => void 
       <td>
         {app.job_recommendation ? (
           <span className={`badge badge-${recColor(app.job_recommendation)}`}>
-            {app.job_recommendation}
+            {translateRecommendation(t, app.job_recommendation)}
           </span>
-        ) : (
-          "—"
-        )}
+        ) : ("—")}
       </td>
       <td>{app.priority || "—"}</td>
       <td>{app.job_enriched_score ?? "—"}</td>
