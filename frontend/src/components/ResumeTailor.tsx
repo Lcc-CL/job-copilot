@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useTranslation } from "react-i18next";
 import { generateResume, fetchResumeVersions, markVersionUsed, updateResumeVersion } from "../api/client";
 import { AlertTriangle, Loader2, Check, Copy, Sparkles, ChevronDown, ChevronRight } from "lucide-react";
 import type { ResumeVersion, ExperienceBullet } from "../api/types";
@@ -14,6 +15,7 @@ const RISK_COLORS: Record<string, string> = {
 };
 
 export default function ResumeTailor({ applicationId }: Props) {
+  const { t } = useTranslation();
   const [versions, setVersions] = useState<ResumeVersion[]>([]);
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
@@ -91,11 +93,11 @@ export default function ResumeTailor({ applicationId }: Props) {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
         <h3 style={{ fontSize: 13, fontWeight: 600, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: 0.5 }}>
           <Sparkles size={14} style={{ marginRight: 4 }} />
-          Resume Tailor
+          {t("resume.title")}
         </h3>
         <button className="btn btn-primary btn-sm" onClick={handleGenerate} disabled={generating}>
           {generating ? <Loader2 size={14} /> : <Sparkles size={14} />}
-          {generating ? " Generating…" : " Tailor Resume"}
+          {generating ? ` ${t("resume.generating")}` : ` ${t("resume.generate")}`}
         </button>
       </div>
 

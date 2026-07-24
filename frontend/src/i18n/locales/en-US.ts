@@ -158,6 +158,41 @@ const enUS = {
   jdStatus: {
     PENDING_JD: "Pending JD",
   },
+  resume: {
+    title: "Resume Tailor",
+    generate: "Tailor Resume",
+    generating: "Generating…",
+    generated: "Resume generated",
+    failed: "Generation failed",
+    noVersions: "No resume versions yet. Click \"Tailor Resume\" to generate.",
+    markUsed: "Use",
+    markedUsed: "Marked as used",
+    reject: "Reject",
+    accept: "Accept",
+    summary: "Summary",
+    skills: "Skills",
+    experienceChanges: "Experience Changes",
+    original: "Original",
+    tailored: "Tailored",
+    reason: "Reason",
+    evidence: "Evidence",
+    riskLevel: "Risk Level",
+    fullResume: "Full Resume",
+    unsupported: "Unsupported",
+    warnings: "Warnings",
+    showAll: "Show all versions",
+    versionStatus: {
+      DRAFT: "Draft",
+      REVIEWED: "Reviewed",
+      USED: "Used",
+      ARCHIVED: "Archived",
+    },
+    riskLevels: {
+      SAFE: "Safe",
+      REVIEW: "Review",
+      BLOCKED: "Blocked",
+    },
+  },
 };
 
 export default enUS;

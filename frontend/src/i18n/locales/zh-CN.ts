@@ -158,6 +158,41 @@ const zhCN = {
   jdStatus: {
     PENDING_JD: "待补 JD",
   },
+  resume: {
+    title: "简历定制",
+    generate: "定制简历",
+    generating: "生成中…",
+    generated: "简历已生成",
+    failed: "生成失败",
+    noVersions: "暂无定制版本，点击「定制简历」生成",
+    markUsed: "使用",
+    markedUsed: "已标记使用",
+    reject: "拒绝",
+    accept: "接受",
+    summary: "摘要",
+    skills: "技能",
+    experienceChanges: "经历修改",
+    original: "原文",
+    tailored: "定制",
+    reason: "理由",
+    evidence: "证据",
+    riskLevel: "风险",
+    fullResume: "完整简历",
+    unsupported: "不支持",
+    warnings: "警告",
+    showAll: "显示全部版本",
+    versionStatus: {
+      DRAFT: "草稿",
+      REVIEWED: "已审核",
+      USED: "已使用",
+      ARCHIVED: "已归档",
+    },
+    riskLevels: {
+      SAFE: "安全",
+      REVIEW: "需审核",
+      BLOCKED: "已阻止",
+    },
+  },
 };
 
 export default zhCN;
