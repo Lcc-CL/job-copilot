@@ -4,9 +4,27 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Job Copilot</title>
+    <style>
+      html, body, #root {
+        min-height: 100vh;
+        margin: 0;
+        background: #f8f9fb;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      }
+      #boot-placeholder {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        color: #6b7280;
+        font-size: 14px;
+      }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div id="boot-placeholder">Job Copilot</div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

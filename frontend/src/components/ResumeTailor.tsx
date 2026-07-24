@@ -128,9 +128,20 @@ export default function ResumeTailor({ applicationId }: Props) {
                   <span className={`badge ${v.status === "USED" ? "badge-green" : v.status === "REVIEWED" ? "badge-blue" : "badge-gray"}`} style={{ marginLeft: 8, fontSize: 10 }}>
                     {v.status}
                   </span>
-                  <span className={`badge ${v.generation_method === 'llm' ? 'badge-green' : 'badge-yellow'}`} style={{ marginLeft: 8, fontSize: 10 }}>
-                    {v.generation_method === 'llm' ? 'AI' : 'RULE'}
-                  </span>
+                  {(() => {
+                    const gap = JSON.parse(v.gap_analysis_json || '{}');
+                    const isLow = gap.context_quality === 'LOW' || v.generation_method === 'low_context_rule_based';
+                    return (
+                      <>
+                        <span className={`badge ${v.generation_method === 'llm' ? 'badge-green' : 'badge-yellow'}`} style={{ marginLeft: 8, fontSize: 10 }}>
+                          {v.generation_method === 'llm' ? 'AI' : v.generation_method === 'low_context_rule_based' ? 'DRAFT' : 'RULE'}
+                        </span>
+                        {isLow && (
+                          <span className="badge badge-red" style={{ marginLeft: 4, fontSize: 10 }}>LOW_CONTEXT</span>
+                        )}
+                      </>
+                    );
+                  })()}
                   <span style={{ fontSize: 10, color: "var(--text-secondary)", marginLeft: 4 }}>
                     {v.created_at?.slice(0, 10)}
                   </span>
@@ -148,12 +159,26 @@ export default function ResumeTailor({ applicationId }: Props) {
 
               {expandedVersion === v.id && (
                 <div style={{ padding: 12, borderTop: "1px solid var(--border)", fontSize: 12 }}>
-                  {/* Rule-based notice */}
-                  {v.generation_method !== 'llm' && (
-                    <div style={{ background: "var(--warning-light)", padding: 8, borderRadius: 6, marginBottom: 8, fontSize: 11 }}>
-                      ⚠ {t("resume.ruleNotice")}
-                    </div>
-                  )}
+                  {/* Rule-based / Low-context notices */}
+                  {(() => {
+                    const gap = JSON.parse(v.gap_analysis_json || '{}');
+                    const isLow = gap.context_quality === 'LOW' || v.generation_method === 'low_context_rule_based';
+                    if (isLow) {
+                      return (
+                        <div style={{ background: "var(--danger-light)", padding: 8, borderRadius: 6, marginBottom: 8, fontSize: 11 }}>
+                          ⚠ {t("resume.lowContextNotice")}
+                        </div>
+                      );
+                    }
+                    if (v.generation_method !== 'llm') {
+                      return (
+                        <div style={{ background: "var(--warning-light)", padding: 8, borderRadius: 6, marginBottom: 8, fontSize: 11 }}>
+                          ⚠ {t("resume.ruleNotice")}
+                        </div>
+                      );
+                    }
+                    return null;
+                  })()}
                   {/* Summary */}
                   {v.summary_text && (
                     <div style={{ marginBottom: 8 }}>

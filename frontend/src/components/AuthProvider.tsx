@@ -71,7 +71,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 export function RequireAuth({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth();
   const loc = useLocation();
-  if (loading) return <div className="loading-state"><p>Loading…</p></div>;
+  if (loading) return <div style={{display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh",background:"var(--bg,#f8f9fb)",color:"var(--text-secondary,#6b7280)",fontSize:14}}>Job Copilot</div>;
   if (!user) return <Navigate to="/login" state={{ from: loc.pathname }} replace />;
   return <>{children}</>;
 }

@@ -107,9 +107,12 @@ def tailor_resume(application_id: int) -> dict:
         if not resume.strip():
             return {"error": "Master resume is empty", "status": 400}
 
-        jd_text = (job.jd_text or "")[:3000]
+        jd_text = (job.jd_text or "").strip()
         title = job.title or ""
         company = job.company or ""
+
+        # JD quality gate: require >= 100 chars for full generation
+        has_full_jd = len(jd_text) >= 100
 
         # Read score data
         score_data = {}
@@ -120,18 +123,23 @@ def tailor_resume(application_id: int) -> dict:
                 "missing_requirements": _parse_json(s.gaps),
             }
 
-        # Try LLM first, fall back to rule-based
-        try:
-            result = _llm_tailor(resume, jd_text, title, company, score_data)
-            method = "llm"
-        except Exception:
+        # Generate: only use LLM if JD is complete
+        if has_full_jd:
+            try:
+                result = _llm_tailor(resume, jd_text, title, company, score_data)
+                method = "llm"
+            except Exception:
+                result = _rule_tailor(resume, jd_text, title, company, score_data)
+                method = "rule_based"
+        else:
             result = _rule_tailor(resume, jd_text, title, company, score_data)
-            method = "rule_based"
+            method = "low_context_rule_based"
 
         # Create version
         version_name = f"{company}-{title}-{datetime.date.today().isoformat()}"
         bullets = result.get("experience_bullets", [])
-        safe_bullets = [b for b in bullets if b.get("risk_level") != "BLOCKED"]
+        # Restore original_text from master for each bullet with source_id
+        bullets = _restore_original_texts(bullets, resume)
 
         rv = ResumeVersion(
             application_id=application_id,
@@ -145,6 +153,7 @@ def tailor_resume(application_id: int) -> dict:
                 "unsupported": result.get("unsupported_requirements", []),
                 "hard_blockers": result.get("hard_blockers", []),
                 "warnings": result.get("warnings", []),
+                "context_quality": "FULL" if has_full_jd else "LOW",
             }, ensure_ascii=False),
             full_text=result.get("full_resume_text", ""),
             generation_method=method,
@@ -159,6 +168,51 @@ def tailor_resume(application_id: int) -> dict:
         return _version_row(rv)
     finally:
         session.close()
+
+
+def _restore_original_texts(bullets: list, master: str) -> list:
+    """Restore original_text from master resume, ignoring LLM rewrites."""
+    import re as _re
+
+    def _norm(text: str) -> str:
+        """Normalize for fuzzy matching: unicode, case, whitespace, punctuation."""
+        import unicodedata
+        text = unicodedata.normalize("NFKC", text or "")
+        text = text.lower().strip()
+        text = _re.sub(r"\s+", " ", text)
+        text = _re.sub(r"[，,。.！!？?：:；;、""''\"\"（）()【】\[\]《》<>]", "", text)
+        # Full-width to half-width
+        result = []
+        for ch in text:
+            code = ord(ch)
+            if 0xFF01 <= code <= 0xFF5E:
+                result.append(chr(code - 0xFEE0))
+            else:
+                result.append(ch)
+        return "".join(result).strip()
+
+    master_norm = _norm(master)
+    for b in bullets:
+        source_id = b.get("source_id")
+        orig = b.get("original_text", "")
+
+        # If source_id is provided, look up from master (future: structured lookup)
+        # For now: fuzzy match original_text against master to verify
+        if len(orig) > 20:
+            norm_orig = _norm(orig)
+            # Check if a meaningful substring exists in master
+            found = norm_orig[:40] in master_norm if len(norm_orig) >= 40 else norm_orig in master_norm
+            if not found:
+                # Try sliding 30-char window
+                found = any(
+                    norm_orig[i:i + 30] in master_norm
+                    for i in range(0, max(1, len(norm_orig) - 30), 10)
+                )
+            if not found:
+                b["risk_level"] = "BLOCKED"
+                b["reason"] = (b.get("reason", "") + " [BLOCKED: original_text not found in master resume]").strip()
+
+    return bullets
 
 
 def _llm_tailor(resume: str, jd: str, title: str, company: str, score: dict) -> dict:
@@ -261,6 +315,10 @@ def mark_used(version_id: int) -> Optional[dict]:
         rv = session.get(ResumeVersion, version_id)
         if not rv:
             return None
+        # Block mark-used for low-context versions
+        gap = json.loads(rv.gap_analysis_json or "{}")
+        if gap.get("context_quality") == "LOW" or rv.generation_method == "low_context_rule_based":
+            return {"error": "Cannot mark USED: low context quality. Add full JD and regenerate.", "status": 400}
         # Demote other USED versions for same application
         session.execute(
             sa_text("UPDATE resume_versions SET status='REVIEWED' "

@@ -182,6 +182,7 @@ const zhCN = {
     warnings: "警告",
     showAll: "显示全部版本",
     ruleNotice: "当前为基础规则模式：仅进行关键词匹配和内容重排，未执行AI经历改写，请人工检查后使用。",
+    lowContextNotice: "当前岗位缺少完整JD。请先粘贴岗位职责与任职要求，再生成可投递的定制简历。",
     versionStatus: {
       DRAFT: "草稿",
       REVIEWED: "已审核",
