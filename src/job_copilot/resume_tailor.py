@@ -50,21 +50,39 @@ def _now() -> str:
 
 
 def _resume_text(profile_id: Optional[int] = None) -> str:
-    """读取母版简历文本。"""
+    """读取母版简历文本（过滤内部元数据）。"""
+    text = ""
     if profile_id:
         session = get_session()
         try:
             rp = session.get(ResumeProfile, profile_id)
-            return rp.content_text or "" if rp else ""
+            text = rp.content_text or "" if rp else ""
         finally:
             session.close()
+    else:
+        for name in ["母版简历.md", "resume.md", "README.md"]:
+            p = RESUME_DIR / name
+            if p.exists():
+                text = p.read_text(encoding="utf-8")
+                break
 
-    # Fallback: read from file
-    for name in ["母版简历.md", "resume.md", "README.md"]:
-        p = RESUME_DIR / name
-        if p.exists():
-            return p.read_text(encoding="utf-8")
-    return ""
+    # Filter internal metadata lines (merge sources, fact boundaries, system notes)
+    import re
+    lines = text.split("\n")
+    filtered = []
+    skip_patterns = [
+        r"^# .*母版简历.*事实来源",
+        r"^> 合并自",
+        r"^> 本文件是",
+        r"^> `\[待补充\]`",
+        r"^\[待补充\]",
+        r"^> \*",
+    ]
+    for line in lines:
+        if any(re.match(p, line) for p in skip_patterns):
+            continue
+        filtered.append(line)
+    return "\n".join(filtered)
 
 
 def _get_or_create_master_profile() -> ResumeProfile:

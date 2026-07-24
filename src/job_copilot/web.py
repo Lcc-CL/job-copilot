@@ -346,6 +346,11 @@ def update_job(job_id: int, body: JobUpdate):
             if hasattr(j, k):
                 setattr(j, k, v)
 
+        # Auto-sync jd_status based on jd_text length
+        if "jd_text" in updates:
+            jd = (j.jd_text or "").strip()
+            j.jd_status = "FULL" if len(jd) >= 100 else "PENDING_JD"
+
         # notes 写入关联的 application
         if notes is not None and j.application:
             j.application.notes = notes
