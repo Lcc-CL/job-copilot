@@ -146,6 +146,39 @@ export interface EventCreate {
   content?: string;
 }
 
+export interface ResumeProfile {
+  id: number;
+  name: string;
+  content_text: string | null;
+  is_master: number;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface ExperienceBullet {
+  original_text: string;
+  tailored_text: string;
+  reason: string;
+  evidence_reference: string;
+  risk_level: "SAFE" | "REVIEW" | "BLOCKED";
+}
+
+export interface ResumeVersion {
+  id: number;
+  application_id: number;
+  resume_profile_id: number | null;
+  version_name: string | null;
+  summary_text: string | null;
+  skills_json: string | null;
+  experience_bullets_json: string | null;
+  gap_analysis_json: string | null;
+  full_text: string | null;
+  generation_method: string | null;
+  status: string;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
 export interface FollowUpAction {
   content?: string;
   next_follow_up_at?: string | null;

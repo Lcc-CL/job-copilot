@@ -5,6 +5,7 @@ import {
   Save, Edit3,
 } from "lucide-react";
 import { stageColor, fmtDate } from "../pages/Dashboard";
+import ResumeTailor from "./ResumeTailor";
 import type { ApplicationUpdate } from "../api/types";
 
 const STAGES = [
@@ -243,6 +244,9 @@ export default function DetailDrawer({ applicationId, onClose }: Props) {
                   </>
                 )}
               </div>
+
+              {/* Resume Tailor */}
+              <ResumeTailor applicationId={applicationId} />
 
               {/* Events Timeline */}
               <div className="drawer-section">

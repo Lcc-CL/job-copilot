@@ -180,6 +180,44 @@ class ApplicationEvent(Base):
 # 同步运行记录
 # ============================================================
 
+# ============================================================
+# 简历定制
+# ============================================================
+
+class ResumeProfile(Base):
+    __tablename__ = "resume_profiles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    content_text: Mapped[Optional[str]] = mapped_column(Text)
+    content_structured_json: Mapped[Optional[str]] = mapped_column(Text)
+    is_master: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[Optional[str]] = mapped_column(String)
+    updated_at: Mapped[Optional[str]] = mapped_column(String)
+
+
+class ResumeVersion(Base):
+    __tablename__ = "resume_versions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    application_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("applications.id", ondelete="CASCADE"), nullable=False
+    )
+    resume_profile_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("resume_profiles.id", ondelete="SET NULL")
+    )
+    version_name: Mapped[Optional[str]] = mapped_column(String)
+    summary_text: Mapped[Optional[str]] = mapped_column(Text)
+    skills_json: Mapped[Optional[str]] = mapped_column(Text)
+    experience_bullets_json: Mapped[Optional[str]] = mapped_column(Text)
+    gap_analysis_json: Mapped[Optional[str]] = mapped_column(Text)
+    full_text: Mapped[Optional[str]] = mapped_column(Text)
+    generation_method: Mapped[Optional[str]] = mapped_column(String, default="llm")
+    status: Mapped[str] = mapped_column(String, default="DRAFT")
+    created_at: Mapped[Optional[str]] = mapped_column(String)
+    updated_at: Mapped[Optional[str]] = mapped_column(String)
+
+
 class SyncRun(Base):
     __tablename__ = "sync_runs"
 
@@ -269,6 +307,44 @@ def run_migrations(engine, *, drop_applications: bool = False) -> list[str]:
                 )
             """)
             applied.append("sync_runs")
+
+        # --- resume_profiles ---
+        if "resume_profiles" not in _existing_tables(engine):
+            conn.exec_driver_sql("""
+                CREATE TABLE IF NOT EXISTS resume_profiles (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    content_text TEXT,
+                    content_structured_json TEXT,
+                    is_master INTEGER DEFAULT 0,
+                    created_at TEXT,
+                    updated_at TEXT
+                )
+            """)
+            applied.append("resume_profiles")
+
+        # --- resume_versions ---
+        if "resume_versions" not in _existing_tables(engine):
+            conn.exec_driver_sql("""
+                CREATE TABLE IF NOT EXISTS resume_versions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    application_id INTEGER NOT NULL
+                        REFERENCES applications(id) ON DELETE CASCADE,
+                    resume_profile_id INTEGER
+                        REFERENCES resume_profiles(id) ON DELETE SET NULL,
+                    version_name TEXT,
+                    summary_text TEXT,
+                    skills_json TEXT,
+                    experience_bullets_json TEXT,
+                    gap_analysis_json TEXT,
+                    full_text TEXT,
+                    generation_method TEXT DEFAULT 'llm',
+                    status TEXT DEFAULT 'DRAFT',
+                    created_at TEXT,
+                    updated_at TEXT
+                )
+            """)
+            applied.append("resume_versions")
 
         # --- applications 重建 ---
         if drop_applications:

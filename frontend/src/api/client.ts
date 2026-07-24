@@ -153,4 +153,42 @@ export function getApplicationsCsvUrl(): string {
   return `${BASE}/export/applications.csv`;
 }
 
+// ---- Resume Profiles ----
+
+export function fetchResumeProfiles(): Promise<ResumeProfile[]> {
+  return request<ResumeProfile[]>("/resume-profiles");
+}
+
+export function createResumeProfile(body: Partial<ResumeProfile>): Promise<ResumeProfile> {
+  return request<ResumeProfile>("/resume-profiles", { method: "POST", body: JSON.stringify(body) });
+}
+
+export function updateResumeProfile(id: number, body: Partial<ResumeProfile>): Promise<ResumeProfile> {
+  return request<ResumeProfile>(`/resume-profiles/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+}
+
+// ---- Resume Versions ----
+
+export function fetchResumeVersions(appId: number): Promise<ResumeVersion[]> {
+  return request<ResumeVersion[]>(`/applications/${appId}/resume-versions`);
+}
+
+export function generateResume(appId: number): Promise<ResumeVersion> {
+  return request<ResumeVersion>(`/applications/${appId}/resume-tailor`, { method: "POST" });
+}
+
+export function fetchResumeVersion(versionId: number): Promise<ResumeVersion> {
+  return request<ResumeVersion>(`/resume-versions/${versionId}`);
+}
+
+export function updateResumeVersion(versionId: number, body: Partial<ResumeVersion>): Promise<ResumeVersion> {
+  return request<ResumeVersion>(`/resume-versions/${versionId}`, { method: "PATCH", body: JSON.stringify(body) });
+}
+
+export function markVersionUsed(versionId: number): Promise<ResumeVersion> {
+  return request<ResumeVersion>(`/resume-versions/${versionId}/mark-used`, { method: "POST" });
+}
+
+import type { ResumeProfile, ResumeVersion } from "./types";
+
 export { ApiError };

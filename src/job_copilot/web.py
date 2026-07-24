@@ -725,6 +725,70 @@ def follow_up_action(application_id: int, body: FollowUpAction):
         session.close()
 
 
+# ---------- Resume Tailor ----------
+
+@app.get("/api/resume-profiles")
+def list_resume_profiles():
+    from .resume_tailor import get_profiles
+    return get_profiles()
+
+
+@app.post("/api/resume-profiles", status_code=201)
+def create_resume_profile(body: dict):
+    from .resume_tailor import upsert_profile
+    return upsert_profile(body)
+
+
+@app.patch("/api/resume-profiles/{profile_id}")
+def update_resume_profile(profile_id: int, body: dict):
+    body["id"] = profile_id
+    from .resume_tailor import upsert_profile
+    return upsert_profile(body)
+
+
+@app.get("/api/applications/{application_id}/resume-versions")
+def list_resume_versions(application_id: int):
+    from .resume_tailor import get_versions
+    return get_versions(application_id)
+
+
+@app.post("/api/applications/{application_id}/resume-tailor", status_code=201)
+def generate_resume(application_id: int):
+    from .resume_tailor import tailor_resume
+    result = tailor_resume(application_id)
+    if "error" in result:
+        status = result.get("status", 400)
+        raise HTTPException(status_code=status, detail=result["error"])
+    return result
+
+
+@app.get("/api/resume-versions/{version_id}")
+def get_resume_version(version_id: int):
+    from .resume_tailor import get_version
+    rv = get_version(version_id)
+    if not rv:
+        raise HTTPException(404, "Version not found")
+    return rv
+
+
+@app.patch("/api/resume-versions/{version_id}")
+def update_resume_version(version_id: int, body: dict):
+    from .resume_tailor import update_version
+    rv = update_version(version_id, body)
+    if not rv:
+        raise HTTPException(404, "Version not found")
+    return rv
+
+
+@app.post("/api/resume-versions/{version_id}/mark-used")
+def mark_version_used(version_id: int):
+    from .resume_tailor import mark_used
+    rv = mark_used(version_id)
+    if not rv:
+        raise HTTPException(404, "Version not found")
+    return rv
+
+
 # ============================================================
 # SPA fallback (production: serve React frontend)
 # ============================================================
