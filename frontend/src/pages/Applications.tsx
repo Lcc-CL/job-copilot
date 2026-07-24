@@ -6,7 +6,7 @@ import { AlertTriangle, Loader2, Search, ExternalLink, Table, Columns } from "lu
 import DetailDrawer from "../components/DetailDrawer";
 import BoardView from "../components/BoardView";
 import { stageColor, fmtDate } from "./Dashboard";
-import { translateRecommendation } from "../i18n/helpers";
+import { translateStage, translateRecommendation } from "../i18n/helpers";
 import type { ApplicationDetail } from "../api/types";
 
 const STAGES = [
@@ -69,7 +69,7 @@ export default function Applications() {
       <div className="toolbar">
         <Search size={14} color="var(--text-secondary)" />
         <input
-          placeholder="Search company or position…"
+          placeholder={t("common.search")}
           value={keyword}
           onChange={(e) => { setKeyword(e.target.value); setPage(0); }}
         />
@@ -86,7 +86,7 @@ export default function Applications() {
         >
           <option value="">{t("applications.allStages")}</option>
           {STAGES.map((s) => (
-            <option key={s} value={s}>{s}</option>
+            <option key={s} value={s}>{translateStage(t, s)}</option>
           ))}
         </select>
         <select
@@ -95,7 +95,7 @@ export default function Applications() {
         >
           <option value="">{t("applications.allRecs")}</option>
           {RECOMMENDATIONS.map((r) => (
-            <option key={r} value={r}>{r}</option>
+            <option key={r} value={r}>{translateRecommendation(t, r)}</option>
           ))}
         </select>
         <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 13 }}>
@@ -140,7 +140,7 @@ export default function Applications() {
 
       {/* Content */}
       {isLoading ? (
-        <div className="loading-state"><Loader2 size={24} /> Loading applications…</div>
+        <div className="loading-state"><Loader2 size={24} /> {t("common.loading")}</div>
       ) : isError ? (
         <div className="error-state">
           <AlertTriangle size={24} />
@@ -154,11 +154,11 @@ export default function Applications() {
             <button className="btn btn-ghost btn-sm" onClick={() => {
               setKeyword(""); setStage(""); setRecommendation(""); setOverdue(false);
             }}>
-              Clear filters
+              {t("common.clearFilters")}
             </button>
           ) : (
             <p style={{ fontSize: 13, marginTop: 8 }}>
-              Run <code>python -m job_copilot web import-tracking</code> to import tracking data.
+              {t("applications.noApplications")}
             </p>
           )}
         </div>
@@ -170,16 +170,16 @@ export default function Applications() {
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>Company</th>
-                  <th>Position</th>
-                  <th>Stage</th>
-                  <th>Recommendation</th>
-                  <th>Priority</th>
-                  <th>Score</th>
-                  <th>Last Contact</th>
-                  <th>Next Follow-up</th>
-                  <th>Updated</th>
-                  <th>Action</th>
+                  <th>{t("jobPool.company")}</th>
+                  <th>{t("jobPool.title")}</th>
+                  <th>{t("applications.detail.stage")}</th>
+                  <th>{t("applications.detail.recommendation")}</th>
+                  <th>{t("applications.detail.priority")}</th>
+                  <th>{t("jobPool.score")}</th>
+                  <th>{t("applications.detail.lastContact")}</th>
+                  <th>{t("applications.detail.nextFollowUp")}</th>
+                  <th>{t("common.updated")}</th>
+                  <th>{t("jobPool.action")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -198,7 +198,7 @@ export default function Applications() {
           {/* Pagination */}
           <div className="pagination">
             <span>
-              {data!.total} total · Page {page + 1} of {totalPages || 1}
+              {data!.total} total · {t("common.previous")} {page + 1} / {totalPages || 1}
             </span>
             <div style={{ display: "flex", gap: 8 }}>
               <button disabled={page === 0} onClick={() => setPage((p) => p - 1)}>
@@ -228,7 +228,7 @@ function AppRow({ app, onClick, t }: { app: ApplicationDetail; onClick: () => vo
       <td style={{ fontWeight: 500 }}>{app.job_company || "—"}</td>
       <td>{app.job_title || "—"}</td>
       <td>
-        <span className={`badge badge-${stageColor(app.stage)}`}>{app.stage}</span>
+        <span className={`badge badge-${stageColor(app.stage)}`}>{translateStage(t, app.stage)}</span>
       </td>
       <td>
         {app.job_recommendation ? (

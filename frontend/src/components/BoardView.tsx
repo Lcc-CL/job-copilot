@@ -215,7 +215,7 @@ function SortableCard({ app, onSelect, t }: { app: ApplicationDetail; onSelect: 
           </div>
           {app.next_follow_up_at && (
             <div style={{ fontSize: 10, color: overdue ? "var(--danger)" : "var(--text-secondary)", marginTop: 2 }}>
-              Next: {new Date(app.next_follow_up_at).toLocaleDateString("zh-CN")}
+              {t("applications.detail.nextFollowUp")}: {new Date(app.next_follow_up_at).toLocaleDateString("zh-CN")}
             </div>
           )}
         </div>
