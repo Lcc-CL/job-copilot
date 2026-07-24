@@ -181,6 +181,7 @@ const zhCN = {
     unsupported: "不支持",
     warnings: "警告",
     showAll: "显示全部版本",
+    ruleNotice: "当前为基础规则模式：仅进行关键词匹配和内容重排，未执行AI经历改写，请人工检查后使用。",
     versionStatus: {
       DRAFT: "草稿",
       REVIEWED: "已审核",

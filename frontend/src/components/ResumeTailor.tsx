@@ -128,8 +128,11 @@ export default function ResumeTailor({ applicationId }: Props) {
                   <span className={`badge ${v.status === "USED" ? "badge-green" : v.status === "REVIEWED" ? "badge-blue" : "badge-gray"}`} style={{ marginLeft: 8, fontSize: 10 }}>
                     {v.status}
                   </span>
-                  <span style={{ fontSize: 10, color: "var(--text-secondary)", marginLeft: 8 }}>
-                    {v.generation_method} · {v.created_at?.slice(0, 10)}
+                  <span className={`badge ${v.generation_method === 'llm' ? 'badge-green' : 'badge-yellow'}`} style={{ marginLeft: 8, fontSize: 10 }}>
+                    {v.generation_method === 'llm' ? 'AI' : 'RULE'}
+                  </span>
+                  <span style={{ fontSize: 10, color: "var(--text-secondary)", marginLeft: 4 }}>
+                    {v.created_at?.slice(0, 10)}
                   </span>
                 </div>
                 <div style={{ display: "flex", gap: 4 }}>
@@ -145,6 +148,12 @@ export default function ResumeTailor({ applicationId }: Props) {
 
               {expandedVersion === v.id && (
                 <div style={{ padding: 12, borderTop: "1px solid var(--border)", fontSize: 12 }}>
+                  {/* Rule-based notice */}
+                  {v.generation_method !== 'llm' && (
+                    <div style={{ background: "var(--warning-light)", padding: 8, borderRadius: 6, marginBottom: 8, fontSize: 11 }}>
+                      ⚠ {t("resume.ruleNotice")}
+                    </div>
+                  )}
                   {/* Summary */}
                   {v.summary_text && (
                     <div style={{ marginBottom: 8 }}>

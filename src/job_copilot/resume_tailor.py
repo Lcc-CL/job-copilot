@@ -164,17 +164,22 @@ def tailor_resume(application_id: int) -> dict:
 def _llm_tailor(resume: str, jd: str, title: str, company: str, score: dict) -> dict:
     from .llm import chat_json
     cfg = load_config()
-    model = cfg.llm.get("model_analysis", "deepseek-v4-pro")
+    model = cfg.llm.get("model_drafting", "deepseek-v4-flash")
 
     user = (
-        f"【母版简历】\n{resume[:4000]}\n\n"
+        f"【母版简历】\n{resume[:3000]}\n\n"
         f"【岗位】{title} @ {company}\n"
-        f"【JD】\n{jd[:2500]}\n\n"
+        f"【JD】\n{jd[:2000]}\n\n"
         f"【已匹配证据】{json.dumps(score.get('matched_evidence', []), ensure_ascii=False)}\n"
         f"【缺失要求】{json.dumps(score.get('missing_requirements', []), ensure_ascii=False)}\n"
         f"请基于母版内容生成定制简历JSON。"
     )
-    return chat_json(TAILOR_SYSTEM, user, model=model, max_tokens=4000)
+    try:
+        return chat_json(TAILOR_SYSTEM, user, model=model, max_tokens=8000)
+    except Exception:
+        # Retry with shorter prompt
+        user_short = f"母版简历:\n{resume[:2000]}\n\n岗位:{title}@{company}\nJD:{jd[:1000]}\n请生成定制简历JSON。"
+        return chat_json(TAILOR_SYSTEM, user_short, model=model, max_tokens=8000)
 
 
 def _rule_tailor(resume: str, jd: str, title: str, company: str, score: dict) -> dict:

@@ -181,6 +181,7 @@ const enUS = {
     unsupported: "Unsupported",
     warnings: "Warnings",
     showAll: "Show all versions",
+    ruleNotice: "Basic rule-based mode: keyword matching and content reordering only. No AI bullet rewriting was performed. Please review manually.",
     versionStatus: {
       DRAFT: "Draft",
       REVIEWED: "Reviewed",
