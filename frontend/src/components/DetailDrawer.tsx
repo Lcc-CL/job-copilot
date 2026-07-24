@@ -136,38 +136,6 @@ export default function DetailDrawer({ applicationId, onClose }: Props) {
                 <Field label="Company" value={data.job_company} />
                 <Field label="Location" value={data.job_city} />
                 <Field label="Salary" value={data.job_salary_text} />
-                <Field label="JD Status" value={data.job_jd_status} />
-                <div style={{ marginTop: 8 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                    <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-secondary)" }}>
-                      JD Text ({jdLen} chars)
-                    </span>
-                    {!jdEditing ? (
-                      <button className="btn btn-ghost btn-sm" onClick={() => setJdEditing(true)}>
-                        <Edit3 size={12} /> Edit
-                      </button>
-                    ) : (
-                      <div style={{ display: "flex", gap: 4 }}>
-                        <button className="btn btn-secondary btn-sm" onClick={() => setJdEditing(false)}>Cancel</button>
-                        <button className="btn btn-primary btn-sm" onClick={handleJdSave} disabled={jdSaving}>
-                          {jdSaving ? <Loader2 size={12} /> : <Save size={12} />} Save
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                  {jdEditing ? (
-                    <textarea
-                      value={jdText}
-                      onChange={(e) => setJdText(e.target.value)}
-                      style={{ width: "100%", minHeight: 120, padding: 8, border: "1px solid var(--border)", borderRadius: 6, fontSize: 12, fontFamily: "inherit" }}
-                      placeholder="Paste full job description here (responsibilities + requirements)..."
-                    />
-                  ) : (
-                    <div style={{ fontSize: 12, color: jdLen > 0 ? "var(--text-secondary)" : "var(--danger)", maxHeight: 80, overflow: "auto", whiteSpace: "pre-wrap" }}>
-                      {jdLen > 0 ? (jdText || "").slice(0, 300) + (jdLen > 300 ? "..." : "") : "No JD text. Click Edit to paste job description."}
-                    </div>
-                  )}
-                </div>
                 <Field label="Original Score" value={data.job_original_score} />
                 <Field label="Enriched Score" value={data.job_enriched_score} />
                 <Field
@@ -193,6 +161,62 @@ export default function DetailDrawer({ applicationId, onClose }: Props) {
                       {copied ? <Check size={12} /> : <Copy size={12} />}
                       {copied ? " Copied" : " Copy"}
                     </button>
+                  </div>
+                )}
+              </div>
+
+              {/* JD Section */}
+              <div className="drawer-section">
+                <h3>Job Description</h3>
+                <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 4 }}>
+                  Status: {data.job_jd_status || "N/A"} · Chars: {jdLen} · Quality: {jdLen >= 100 ? "FULL" : "LOW"}
+                </div>
+                {jdEditing ? (
+                  <div>
+                    <textarea
+                      value={jdText}
+                      onChange={(e) => setJdText(e.target.value)}
+                      style={{ width: "100%", minHeight: "12em", padding: 8, border: "1px solid var(--border)", borderRadius: 6, fontSize: 12, fontFamily: "inherit", resize: "vertical" }}
+                      placeholder="岗位职责：&#10;任职要求：&#10;加分项："
+                    />
+                    <div style={{ display: "flex", gap: 6, marginTop: 6, alignItems: "center" }}>
+                      <button className="btn btn-primary btn-sm" onClick={handleJdSave} disabled={jdSaving}>
+                        {jdSaving ? <Loader2 size={12} /> : <Save size={12} />} Save JD
+                      </button>
+                      <button className="btn btn-secondary btn-sm" onClick={() => setJdEditing(false)}>Cancel</button>
+                      <button className="btn btn-ghost btn-sm" onClick={async () => {
+                        try {
+                          const clip = await navigator.clipboard.readText();
+                          if (clip) { setJdText(clip); setJdEditing(true); }
+                        } catch { alert("Cannot read clipboard. Please paste manually (Cmd+V)."); }
+                      }}>Paste from Clipboard</button>
+                      <span style={{ fontSize: 11, color: "var(--text-secondary)" }}>{jdText.length} chars</span>
+                    </div>
+                    <div style={{ fontSize: 10, color: "var(--text-secondary)", marginTop: 4 }}>
+                      If the job site blocks copying, use browser DevTools to copy page text, or save as PDF first.
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    {jdLen > 0 ? (
+                      <div>
+                        <div style={{ fontSize: 12, maxHeight: 100, overflow: "auto", whiteSpace: "pre-wrap", background: "var(--info-light)", padding: 8, borderRadius: 6, marginBottom: 8 }}>
+                          {jdText.slice(0, 400)}{jdLen > 400 ? "..." : ""}
+                        </div>
+                        <button className="btn btn-ghost btn-sm" onClick={() => setJdEditing(true)}>
+                          <Edit3 size={12} /> Edit JD
+                        </button>
+                      </div>
+                    ) : (
+                      <div style={{ padding: 16, textAlign: "center", background: "var(--danger-light)", borderRadius: 8 }}>
+                        <p style={{ fontSize: 13, color: "var(--danger)", marginBottom: 8 }}>
+                          No JD text. Paste the full job description to enable AI resume tailoring.
+                        </p>
+                        <button className="btn btn-primary btn-sm" onClick={() => setJdEditing(true)}>
+                          <Edit3 size={12} /> Add JD
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
