@@ -22,41 +22,28 @@ def _default_db_url() -> str:
 
 
 def _get_database_url() -> str:
-    url = os.getenv("DATABASE_URL", "").strip()
-    # Treat empty string, "${...}" template, or unset as "not set"
-    if not url or url.startswith("${"):
-        url = ""
-        for var in ("POSTGRES_CONNECTION_STRING", "POSTGRES_URI",
-                     "NEON_DATABASE_URL", "DATABASE_URL_REF"):
-            url = os.getenv(var)
-            if url:
-                break
-    # Fallback: construct from individual PG env vars
-    if not url:
-        pg_host = os.getenv("PGHOST")
-        if pg_host:
-            pg_user = os.getenv("PGUSER", "postgres")
-            pg_pass = os.getenv("PGPASSWORD", "")
-            pg_db = os.getenv("PGDATABASE", "postgres")
-            pg_port = os.getenv("PGPORT", "5432")
-            url = f"postgresql+psycopg://{pg_user}:{pg_pass}@{pg_host}:{pg_port}/{pg_db}"
-    # Zeabur internal networking: use env vars ZEABUR_PG_USER/PASS/HOST/DB
-    if not url:
-        zb_host = os.getenv("ZEABUR_PG_HOST")
-        if zb_host:
-            zb_user = os.getenv("ZEABUR_PG_USER", "root")
-            zb_pass = os.getenv("ZEABUR_PG_PASS", "")
-            zb_db = os.getenv("ZEABUR_PG_DB", "zeabur")
-            zb_port = os.getenv("ZEABUR_PG_PORT", "5432")
-            url = f"postgresql+psycopg://{zb_user}:{zb_pass}@{zb_host}:{zb_port}/{zb_db}"
-    if not url:
-        url = _default_db_url()
-    # Normalize: postgres:// → postgresql+psycopg://
-    if url.startswith("postgres://"):
-        url = "postgresql+psycopg://" + url[len("postgres://"):]
-    elif url.startswith("postgresql://") and "+psycopg" not in url:
-        url = "postgresql+psycopg://" + url[len("postgresql://"):]
-    return url
+    raw = os.getenv("DATABASE_URL", "").strip()
+
+    # Zeabur: if DATABASE_URL is a literal variable name, resolve it
+    if raw in ("POSTGRES_CONNECTION_STRING", "POSTGRES_URI"):
+        raw = os.getenv(raw, "").strip()
+
+    if not raw:
+        raw = _default_db_url()
+
+    # Normalize URL schemes
+    if raw.startswith("postgres://"):
+        raw = "postgresql+psycopg://" + raw[len("postgres://"):]
+    elif raw.startswith("postgresql://") and "+psycopg" not in raw:
+        raw = "postgresql+psycopg://" + raw[len("postgresql://"):]
+    elif raw.startswith("postgresql+psycopg://") or raw.startswith("sqlite://"):
+        pass  # already valid
+    else:
+        raise RuntimeError(
+            "DATABASE_URL must be a valid SQLite or PostgreSQL URL"
+        )
+
+    return raw
 
 
 def _engine_kwargs(url: str) -> dict:

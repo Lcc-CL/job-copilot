@@ -32,12 +32,6 @@ EXPOSE 8080
 
 ENV PYTHONPATH=/app/src
 ENV APP_ENV=production
-# Zeabur internal PostgreSQL networking (connect from within cluster)
-ENV ZEABUR_PG_HOST=postgresql.zeabur.internal
-ENV ZEABUR_PG_USER=root
-ENV ZEABUR_PG_PASS=98TrSkJca5Gt6DhXVF0O1P24z3HRU7fY
-ENV ZEABUR_PG_DB=zeabur
-ENV ZEABUR_PG_PORT=5432
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
     CMD curl -f http://localhost:${PORT:-8080}/api/health || exit 1
