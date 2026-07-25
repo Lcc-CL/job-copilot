@@ -159,21 +159,28 @@ def tailor_resume(application_id: int) -> dict:
         # Restore original_text from master for each bullet with source_id
         bullets = _restore_original_texts(bullets, resume)
 
+        # Evidence gate on summary and skills
+        unsupported = result.get("unsupported_requirements", [])
+        summary_text = _clean_summary(
+            result.get("tailored_summary", ""), unsupported)
+        skills_list = _clean_skills(
+            result.get("reordered_skills", []), unsupported, resume)
+
         rv = ResumeVersion(
             application_id=application_id,
             resume_profile_id=master.id,
             version_name=version_name,
-            summary_text=result.get("tailored_summary", ""),
-            skills_json=json.dumps(result.get("reordered_skills", []), ensure_ascii=False),
+            summary_text=summary_text,
+            skills_json=json.dumps(skills_list, ensure_ascii=False),
             experience_bullets_json=json.dumps(bullets, ensure_ascii=False),
             gap_analysis_json=json.dumps({
                 "matched_keywords": result.get("matched_keywords", []),
-                "unsupported": result.get("unsupported_requirements", []),
+                "unsupported": unsupported,
                 "hard_blockers": result.get("hard_blockers", []),
                 "warnings": result.get("warnings", []),
                 "context_quality": "FULL" if has_full_jd else "LOW",
             }, ensure_ascii=False),
-            full_text=result.get("full_resume_text", ""),
+            full_text=_build_full_text(summary_text, skills_list, bullets),
             generation_method=method,
             status="DRAFT",
             created_at=_now(),
@@ -414,6 +421,63 @@ def _profile_row(rp: ResumeProfile) -> dict:
         "created_at": rp.created_at,
         "updated_at": rp.updated_at,
     }
+
+
+def _build_full_text(summary: str, skills: list, bullets: list) -> str:
+    """Assemble full resume text from accepted bullets only."""
+    accepted = [b for b in bullets if b.get("risk_level") != "BLOCKED"]
+    L = ["# 定制简历", "", "## 职业摘要", summary, "", "## 技能"]
+    for s in skills:
+        L.append(f"- {s}")
+    L.append("")
+    L.append("## 相关经历")
+    for i, b in enumerate(accepted):
+        L.append(f"### {i+1}. {b.get('tailored_text','')[:80]}")
+        L.append(b.get("tailored_text", ""))
+        L.append("")
+    return "\n".join(L)
+
+
+def _clean_summary(summary: str, unsupported: list) -> str:
+    """Remove unsupported claims from summary."""
+    import re
+    unsup_lower = {u.lower()[:20] for u in unsupported}
+    sentences = re.split(r'(?<=[。.！!？?])', summary)
+    clean = []
+    for s in sentences:
+        s_lower = s.lower()
+        blocked = False
+        for u in unsup_lower:
+            if u[:10] in s_lower:
+                blocked = True
+                break
+        if not blocked:
+            clean.append(s)
+    return ''.join(clean).strip() or summary[:80] + '…'
+
+
+def _clean_skills(skills: list, unsupported: list, master: str) -> list:
+    """Filter skills against unsupported requirements and master evidence."""
+    unsup_keywords = set()
+    for u in unsupported:
+        for w in u.lower().split():
+            if len(w) > 3 and w not in ('的','和','与','或','有','等','及'):
+                unsup_keywords.add(w)
+    # Also check for frameworks/tools not in master
+    master_lower = master.lower()
+    clean = []
+    for s in skills:
+        s_lower = s.lower()
+        # Block if keyword matches unsupported
+        if any(kw in s_lower for kw in unsup_keywords):
+            continue
+        # Block framework claims not in master
+        for fw in ['langchain','langgraph','fastapi','flask','django','tensorflow','pytorch']:
+            if fw in s_lower and fw not in master_lower:
+                break
+        else:
+            clean.append(s)
+    return clean
 
 
 def _parse_json(val: Optional[str]) -> list:
