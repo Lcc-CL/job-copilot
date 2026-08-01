@@ -13,6 +13,7 @@ from typing import Optional
 from .database import get_session
 from .models import Application, ApplicationEvent, ResumeProfile, ResumeVersion
 from .config import load_config, RESUME_DIR
+from .llm_runtime import LLMDryRun, LLMRuntimeError, get_runtime
 
 
 TAILOR_SYSTEM = """你是高级简历顾问。根据母版简历和岗位JD，定制简历。
@@ -137,8 +138,10 @@ def tailor_resume(application_id: int) -> dict:
             raise ResumeWorkflowError(422, "Application has no linked job")
 
         job = app.job
-        master = _get_or_create_master_profile()
-        resume = master.content_text or ""
+        master = session.query(ResumeProfile).filter(
+            ResumeProfile.is_master == 1
+        ).first()
+        resume = (master.content_text or "") if master else _resume_text()
 
         if not resume.strip():
             raise ResumeWorkflowError(422, "Master resume is empty")
@@ -149,6 +152,11 @@ def tailor_resume(application_id: int) -> dict:
 
         # JD quality gate: require >= 100 chars for full generation
         has_full_jd = len(jd_text) >= 100
+        runtime = get_runtime("resume_tailor")
+        if runtime.mode == "dry-run" and not has_full_jd:
+            raise ResumeWorkflowError(
+                422, "A complete JD is required for LLM dry-run validation"
+            )
 
         # Read score data
         score_data = {}
@@ -163,13 +171,35 @@ def tailor_resume(application_id: int) -> dict:
         if has_full_jd:
             try:
                 result = _llm_tailor(resume, jd_text, title, company, score_data)
-                method = "llm"
-            except Exception:
-                result = _rule_tailor(resume, jd_text, title, company, score_data)
-                method = "rule_based"
+            except LLMDryRun as dry_run:
+                preview = dict(dry_run.preview)
+                preview["application_id"] = application_id
+                return preview
+            except LLMRuntimeError as exc:
+                raise ResumeWorkflowError(
+                    exc.status_code, exc.detail
+                ) from exc
+            source = result.pop(
+                "_llm_source",
+                runtime.mode,
+            )
+            result.pop("_llm_mode", None)
+            method = f"llm_{source}"
         else:
             result = _rule_tailor(resume, jd_text, title, company, score_data)
             method = "low_context_rule_based"
+
+        if not master:
+            now = _now()
+            master = ResumeProfile(
+                name="母版简历",
+                content_text=resume,
+                is_master=1,
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(master)
+            session.flush()
 
         # Create version
         version_name = f"{company}-{title}-{datetime.date.today().isoformat()}"
@@ -295,12 +325,26 @@ def _llm_tailor(resume: str, jd: str, title: str, company: str, score: dict) -> 
         f"【缺失要求】{json.dumps(score.get('missing_requirements', []), ensure_ascii=False)}\n"
         f"请基于母版内容生成定制简历JSON。"
     )
-    try:
-        return chat_json(TAILOR_SYSTEM, user, model=model, max_tokens=8000)
-    except Exception:
-        # Retry with shorter prompt
-        user_short = f"母版简历:\n{resume[:2000]}\n\n岗位:{title}@{company}\nJD:{jd[:1000]}\n请生成定制简历JSON。"
-        return chat_json(TAILOR_SYSTEM, user_short, model=model, max_tokens=8000)
+    return chat_json(
+        TAILOR_SYSTEM,
+        user,
+        model=model,
+        max_tokens=8000,
+        operation="resume_tailor",
+        fake_response=lambda: _fake_tailor_result(
+            resume, jd, title, company, score
+        ),
+    )
+
+
+def _fake_tailor_result(
+    resume: str, jd: str, title: str, company: str, score: dict
+) -> dict:
+    result = _rule_tailor(resume, jd, title, company, score)
+    result["warnings"] = [
+        "测试模式确定性结果，不代表真实模型输出"
+    ]
+    return result
 
 
 def _rule_tailor(resume: str, jd: str, title: str, company: str, score: dict) -> dict:
@@ -515,6 +559,14 @@ def _version_row(rv: ResumeVersion, status_events: Optional[list] = None) -> dic
          if e["event_type"] == "resume_used"),
         None,
     )
+    if rv.generation_method == "llm_fake":
+        source = "fake"
+    elif rv.generation_method == "llm_live":
+        source = "live"
+    elif rv.generation_method == "llm":
+        source = "legacy"
+    else:
+        source = "rule"
     return {
         "id": rv.id,
         "application_id": rv.application_id,
@@ -526,6 +578,7 @@ def _version_row(rv: ResumeVersion, status_events: Optional[list] = None) -> dic
         "gap_analysis_json": rv.gap_analysis_json,
         "full_text": rv.full_text,
         "generation_method": rv.generation_method,
+        "source": source,
         "status": rv.status,
         "created_at": rv.created_at,
         "reviewed_at": reviewed_at,

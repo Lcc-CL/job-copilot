@@ -50,8 +50,12 @@ def cmd_status() -> None:
         sys.exit(1)
     me = cfg.me
     print(f"Job-Copilot v{__version__}")
-    print(f"✓ 配置已加载: LLM={cfg.llm.get('provider')} "
-          f"({cfg.llm.get('model_analysis')}/{cfg.llm.get('model_drafting')})")
+    from .llm_runtime import runtime_overview
+    llm_info = runtime_overview()
+    print(
+        f"✓ LLM={llm_info['label']} / {llm_info['provider']} "
+        f"({cfg.llm.get('model_analysis')}/{cfg.llm.get('model_drafting')})"
+    )
     print(f"✓ 求职画像: {me.get('keywords')} @ {me.get('cities')} "
           f"薪资 {me.get('salary_expect_min')}~{me.get('salary_expect_max')}")
     print(f"✓ 采集平台: {cfg.collect.get('platforms')} "

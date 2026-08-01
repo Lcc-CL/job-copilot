@@ -16,6 +16,7 @@ from datetime import date
 
 from .config import RESUME_DIR, REPORTS_DIR, load_config
 from . import db, match, llm
+from .llm_runtime import LLMDryRun, get_runtime, persisted_model_name
 
 SYSTEM = """你是资深技术招聘顾问，帮一位【AI应用/Agent工程】转行候选人判断岗位是否值得投。
 严格基于提供的候选人简历事实，不得臆造简历中没有的经历。
@@ -67,6 +68,19 @@ def _verdict_from_fit(fit) -> str:
     return "慎投"
 
 
+def _fake_score_result(r: dict) -> dict:
+    """自动测试使用的确定性评分；不模拟真实模型判断。"""
+    return {
+        "fit_score": 3,
+        "archetype": "其它",
+        "seniority_ok": True,
+        "authenticity": "中",
+        "reasons": ["测试模式确定性结果，不代表真实职位判断"],
+        "highlights": [],
+        "gaps": [],
+    }
+
+
 def score_one(conn, r: dict, resume: str, model: str) -> dict:
     """评估单个职位并存库，返回评分 dict。"""
     user = USER_TMPL.format(
@@ -77,9 +91,24 @@ def score_one(conn, r: dict, resume: str, model: str) -> dict:
         degree=r.get("degree") or "", city=r.get("city") or "",
         tags="、".join(match._tags_of(r)),
     )
-    s = llm.chat_json(SYSTEM, user, model=model, max_tokens=2500)
+    s = llm.chat_json(
+        SYSTEM,
+        user,
+        model=model,
+        max_tokens=2500,
+        operation="score",
+        fake_response=lambda: _fake_score_result(r),
+    )
+    source = s.pop("_llm_source", get_runtime("score", model).mode)
+    s.pop("_llm_mode", None)
+    s["source"] = source
     s["verdict"] = _verdict_from_fit(s.get("fit_score"))  # 代码层强制 fit↔verdict 一致
-    db.save_score(conn, r["id"], s, model)
+    db.save_score(
+        conn,
+        r["id"],
+        s,
+        persisted_model_name(model, source),
+    )
     return s
 
 
@@ -100,19 +129,35 @@ def score_top(top_k: int = 20, resume: str = "", skip_scored: bool = False) -> s
 
     cfg = load_config()
     model = cfg.llm["model_analysis"]
-    print(f"→ LLM 精排 {len(cands)} 个候选（模型 {model}，逐个评估，约每条十几秒）…")
+    runtime = get_runtime("score", model)
+    print(
+        f"→ {runtime.label}：精排 {len(cands)} 个候选"
+        f"（{runtime.provider}/{runtime.model}）…"
+    )
 
     results = []
+    previews = []
     for i, (sim, r) in enumerate(cands, 1):
         try:
             s = score_one(conn, r, resume, model)
             results.append((sim, s, r))
             print(f"  [{i}/{len(cands)}] {r.get('title','')[:24]} → "
                   f"fit={s.get('fit_score')} {s.get('verdict')} ({s.get('archetype')})")
+        except LLMDryRun as dry_run:
+            previews.append(dry_run.preview)
+            print(
+                f"  [{i}/{len(cands)}] {r.get('title','')[:24]}"
+                " → 预演完成，未写入评分"
+            )
         except Exception as e:
             print(f"  [{i}/{len(cands)}] {r.get('title','')[:24]} → 评分失败：{type(e).__name__} {str(e)[:80]}")
 
     if not results:
+        if previews:
+            return (
+                f"预演完成：已校验 {len(previews)} 个职位评分请求；"
+                "未调用模型，未写入 job_scores。"
+            )
         return "全部评分失败（检查 API/网络）。"
 
     # 精排：按 fit_score 降序，同分按粗筛相似度
@@ -121,8 +166,9 @@ def score_top(top_k: int = 20, resume: str = "", skip_scored: bool = False) -> s
 
 
 def _report(results: list) -> str:
+    source = results[0][1].get("source", "legacy") if results else "legacy"
     L = [f"# 职位精排（LLM Block A-G · {date.today().isoformat()}）", ""]
-    L.append(f"> {len(results)} 个粗筛候选经 DeepSeek 精评 · 按匹配度排序 · "
+    L.append(f"> source={source} · {len(results)} 个粗筛候选经 LLM 精评 · 按匹配度排序 · "
              "匹配度=LLM判定(1-5)，粗筛=embed余弦")
     L.append("")
     L.append("| 匹配度 | 建议 | 画像 | 够得着 | 真实性 | 职位 | 公司 | 薪资 | 粗筛分 |")

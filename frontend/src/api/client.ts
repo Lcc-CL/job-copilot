@@ -13,6 +13,8 @@ import type {
   ResumeVersionUpdate,
   AccountDetails,
   PasswordChangeResult,
+  LLMRuntimeInfo,
+  ResumeGenerationResponse,
 } from "./types";
 
 const BASE = "/api";
@@ -79,6 +81,10 @@ export function fetchDashboard(): Promise<DashboardSummary> {
 
 export function fetchFollowUps(): Promise<FollowUps> {
   return request<FollowUps>("/follow-ups");
+}
+
+export function fetchLLMRuntime(): Promise<LLMRuntimeInfo> {
+  return request<LLMRuntimeInfo>("/llm/runtime");
 }
 
 // ---- Account ----
@@ -218,8 +224,8 @@ export function fetchResumeVersions(appId: number): Promise<ResumeVersion[]> {
   return request<ResumeVersion[]>(`/applications/${appId}/resume-versions`);
 }
 
-export function generateResume(appId: number): Promise<ResumeVersion> {
-  return request<ResumeVersion>(`/applications/${appId}/resume-tailor`, { method: "POST" });
+export function generateResume(appId: number): Promise<ResumeGenerationResponse> {
+  return request<ResumeGenerationResponse>(`/applications/${appId}/resume-tailor`, { method: "POST" });
 }
 
 export function fetchResumeVersion(versionId: number): Promise<ResumeVersion> {

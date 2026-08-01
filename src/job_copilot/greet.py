@@ -17,6 +17,7 @@ from datetime import date
 from datetime import datetime, timezone
 from .config import RESUME_DIR, REPORTS_DIR, DATA_DIR, load_config
 from . import db, llm, score as score_mod
+from .llm_runtime import LLMDryRun, get_runtime
 
 
 def _now_utc() -> str:
@@ -81,7 +82,11 @@ def generate(min_fit: int = 4, limit: int = 20) -> str:
     rows = rows[:limit]
 
     model = load_config().llm["model_drafting"]  # 文案用 flash 更快
-    print(f"→ 为 {len(rows)} 个高契合岗生成招呼语（不含公司名，模型 {model}）…")
+    runtime = get_runtime("greet", model)
+    print(
+        f"→ {runtime.label}：为 {len(rows)} 个高契合岗生成招呼语"
+        f"（{runtime.provider}/{runtime.model}）…"
+    )
 
     # 先分组，再按 组→薪资 排序输出
     for r in rows:
@@ -94,6 +99,8 @@ def generate(min_fit: int = 4, limit: int = 20) -> str:
     L.append("> 分组=按薪资档（冲刺≥30K / 稳妥22-29K / 保底<22K），用于已读不回率分组对照")
     L.append("")
     track_rows = []
+    preview_count = 0
+    fake_count = 0
     cur_group = None
     for i, r in enumerate(rows, 1):
         if r["_group"] != cur_group:
@@ -110,13 +117,32 @@ def generate(min_fit: int = 4, limit: int = 20) -> str:
             highlights="；".join(highlights) if highlights else "（无）",
         )
         try:
-            out = llm.chat_json(SYSTEM, user, model=model, max_tokens=1200)
+            out = llm.chat_json(
+                SYSTEM,
+                user,
+                model=model,
+                max_tokens=1200,
+                operation="greet",
+                fake_response={
+                    "greeting": "[测试模式] 确定性招呼语结果，不用于真实发送。",
+                    "hook": "source=fake",
+                },
+            )
+            source = out.pop("_llm_source", runtime.mode)
+            out.pop("_llm_mode", None)
             greeting = out.get("greeting", "").strip()
+            if source == "fake":
+                fake_count += 1
+        except LLMDryRun:
+            preview_count += 1
+            continue
         except Exception as e:
             greeting = f"[生成失败：{type(e).__name__}]"
 
         # 回写 job.greeting_text（供 API 查询）
         try:
+            if runtime.mode != "live":
+                continue
             from .database import get_session
             from .models import Job
             from sqlalchemy import update as sa_update
@@ -143,6 +169,17 @@ def generate(min_fit: int = 4, limit: int = 20) -> str:
             "已发日期(填)": "", "已读(填1/0)": "", "回复(填1/0)": "", "邀约(填1/0)": "",
             "链接": r.get("url") or "",
         })
+
+    if preview_count:
+        return (
+            f"预演完成：已校验 {preview_count} 个招呼语请求；"
+            "未调用模型，未写入职位、报告或投递追踪表。"
+        )
+    if fake_count:
+        return (
+            f"测试完成：source=fake，共生成 {fake_count} 个确定性结果；"
+            "未发出网络请求，未写入正式业务数据。"
+        )
 
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     # 同日多批不覆盖：已存在则加 -2/-3 后缀

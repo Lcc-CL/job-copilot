@@ -32,6 +32,52 @@ export interface FollowUps {
   upcoming: ApplicationDetail[];
 }
 
+// ---- LLM Runtime ----
+
+export type LLMRuntimeMode = "fake" | "dry-run" | "live";
+
+export interface LLMRuntimeOperation {
+  label: string;
+  model: string;
+}
+
+export interface LLMRuntimeInfo {
+  mode: LLMRuntimeMode;
+  label: string;
+  provider: string;
+  model: string;
+  operations: Record<string, LLMRuntimeOperation>;
+  live_ready: boolean;
+  network_enabled: boolean;
+  message: string;
+}
+
+export interface LLMDryRunPreview {
+  status: "dry-run";
+  created: false;
+  message: string;
+  application_id: number;
+  runtime: {
+    mode: "dry-run";
+    label: string;
+    provider: string;
+    model: string;
+    operation: string;
+    operation_label: string;
+    live_ready: boolean;
+    network_enabled: false;
+  };
+  request: {
+    message_count: number;
+    response_format: string;
+    max_tokens: number;
+    temperature: number;
+    validated: boolean;
+    validation_errors: string[];
+    network_request_sent: false;
+  };
+}
+
 // ---- Account ----
 
 export interface AccountDetails {
@@ -54,6 +100,8 @@ export interface JobScore {
   reasons: string | null;
   highlights: string | null;
   gaps: string | null;
+  source: "fake" | "live" | "legacy" | string;
+  model: string | null;
 }
 
 export interface Job {
@@ -187,6 +235,7 @@ export interface ResumeVersion {
   gap_analysis_json: string | null;
   full_text: string | null;
   generation_method: string | null;
+  source: "fake" | "live" | "legacy" | "rule" | string;
   status: "DRAFT" | "REVIEWED" | "USED";
   created_at: string | null;
   reviewed_at: string | null;
@@ -194,6 +243,8 @@ export interface ResumeVersion {
   updated_at: string | null;
   status_events: ResumeStatusEvent[];
 }
+
+export type ResumeGenerationResponse = ResumeVersion | LLMDryRunPreview;
 
 export interface ResumeStatusEvent {
   id: number;

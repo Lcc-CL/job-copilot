@@ -199,6 +199,7 @@ const enUS = {
     generated: "Resume generated",
     failed: "Generation failed",
     loadFailed: "Failed to load resume versions",
+    runtimeFailed: "Failed to load LLM runtime mode",
     transitionFailed: "Failed to update resume status",
     updateFailed: "Failed to update resume content",
     loading: "Loading resume versions…",

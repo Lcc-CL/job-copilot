@@ -28,6 +28,12 @@ from typing import Optional
 
 from .config import DATA_DIR, REPORTS_DIR, RESUME_DIR, load_config
 from . import db, llm, score as score_mod
+from .llm_runtime import (
+    LLMDryRun,
+    LLMRuntimeError,
+    get_runtime,
+    persisted_model_name,
+)
 
 ENRICH_DIR = DATA_DIR / "enriched"
 
@@ -302,6 +308,26 @@ def _parse_tags(r: dict) -> list:
         return []
 
 
+def _fake_enriched_score() -> dict:
+    """自动测试使用的确定性二次评分。"""
+    return {
+        "fit_score": 3,
+        "recommendation": "REVIEW",
+        "confidence": "low",
+        "score_change_note": "测试模式确定性结果，不代表真实职位判断",
+        "matched_evidence": [],
+        "missing_requirements": [],
+        "hard_blockers": [],
+        "acceptable_gaps": [],
+        "archetype": "其它",
+        "seniority_ok": True,
+        "authenticity": "中",
+        "reasons": ["测试模式结果"],
+        "highlights": [],
+        "gaps": [],
+    }
+
+
 def rescore_one(conn, r: dict, resume: str, model: str) -> dict:
     """用完整 JD 做二次精排。"""
     jd_text = (r.get("jd_text") or "").strip()
@@ -334,10 +360,29 @@ def rescore_one(conn, r: dict, resume: str, model: str) -> dict:
         jd_text=jd_text,
     )
     try:
-        s = llm.chat_json(ENRICHED_SYSTEM, user, model=model, max_tokens=3000)
-    except Exception as e:
-        return {"fit_score": 0, "verdict": "慎投", "recommendation": "REVIEW",
-                "confidence": "low", "score_change_note": f"LLM调用失败: {e}"}
+        s = llm.chat_json(
+            ENRICHED_SYSTEM,
+            user,
+            model=model,
+            max_tokens=3000,
+            operation="enrich",
+            fake_response=_fake_enriched_score,
+        )
+    except LLMDryRun as dry_run:
+        return {
+            "fit_score": None,
+            "verdict": None,
+            "recommendation": None,
+            "confidence": None,
+            "source": "dry-run",
+            "dry_run": dry_run.preview,
+        }
+    except LLMRuntimeError:
+        raise
+
+    source = s.pop("_llm_source", get_runtime("enrich", model).mode)
+    s.pop("_llm_mode", None)
+    s["source"] = source
 
     s["verdict"] = score_mod._verdict_from_fit(s.get("fit_score"))
     s.setdefault("recommendation", _rec_from_fit(s.get("fit_score")))
@@ -349,7 +394,12 @@ def rescore_one(conn, r: dict, resume: str, model: str) -> dict:
     s.setdefault("acceptable_gaps", [])
 
     # 重新保存精排结果（覆盖第一轮）
-    db.save_score(conn, r["id"], s, model)
+    db.save_score(
+        conn,
+        r["id"],
+        s,
+        persisted_model_name(model, source),
+    )
     return s
 
 
@@ -380,7 +430,11 @@ def rescore_all(candidates: list[dict], fetch_results: list[FetchResult]) -> lis
     fr_map = {fr.job_pk: fr for fr in fetch_results}
 
     enriched = []
-    print(f"→ 二次精排 {len(candidates)} 个候选（含JD全文比对）…")
+    runtime = get_runtime("enrich", model)
+    print(
+        f"→ {runtime.label}：二次精排 {len(candidates)} 个候选"
+        f"（{runtime.provider}/{runtime.model}）…"
+    )
     for i, r in enumerate(candidates):
         # 用 DB 中最新 jd_text（fetch_details 已写入）
         row = dict(conn.execute("SELECT * FROM jobs WHERE id = ?", (r["id"],)).fetchone())
@@ -391,9 +445,15 @@ def rescore_all(candidates: list[dict], fetch_results: list[FetchResult]) -> lis
             s["_fetch_success"] = fr.success if fr else False
             s["_jd_length"] = len(row.get("jd_text") or "")
             enriched.append(s)
-            print(f"  [{i+1}/{len(candidates)}] {row.get('title','')[:24]} → "
-                  f"fit={s.get('fit_score')} {s.get('recommendation','?')} "
-                  f"(JD:{s['_jd_length']}字, conf={s.get('confidence','?')})")
+            if s.get("source") == "dry-run":
+                print(
+                    f"  [{i+1}/{len(candidates)}] {row.get('title','')[:24]}"
+                    " → 预演完成，未写入评分"
+                )
+            else:
+                print(f"  [{i+1}/{len(candidates)}] {row.get('title','')[:24]} → "
+                      f"fit={s.get('fit_score')} {s.get('recommendation','?')} "
+                      f"(JD:{s['_jd_length']}字, conf={s.get('confidence','?')})")
         except Exception as e:
             print(f"  [{i+1}/{len(candidates)}] {row.get('title','')[:24]} → "
                   f"评分失败: {type(e).__name__}")
@@ -740,6 +800,12 @@ def run(top: int = 30, fetch: bool = True, rescore: bool = True,
             s["_fetch_success"] = bool(r.get("jd_text"))
             s["_jd_length"] = len(r.get("jd_text") or "")
             enriched.append(s)
+
+    if enriched and all(s.get("source") == "dry-run" for s in enriched):
+        return (
+            f"预演完成：已校验 {len(enriched)} 个完整 JD 二次分析请求；"
+            "未调用模型，未写入 job_scores，也未生成正式分析报告。"
+        )
 
     # 4. 报告
     md_path, csv_path, xlsx_path = _write_reports(enriched, candidates, fetch_results)

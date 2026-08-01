@@ -199,6 +199,7 @@ const zhCN = {
     generated: "简历已生成",
     failed: "生成失败",
     loadFailed: "加载简历版本失败",
+    runtimeFailed: "加载 LLM 运行模式失败",
     transitionFailed: "简历状态更新失败",
     updateFailed: "简历内容更新失败",
     loading: "正在加载简历版本…",

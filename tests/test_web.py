@@ -17,6 +17,7 @@ _tmp_db.close()
 os.environ["DATABASE_URL"] = f"sqlite:///{_tmp_db.name}"
 os.environ["APP_ENV"] = "development"
 os.environ["APP_ALLOW_DEV_DEFAULTS"] = "true"
+os.environ["LLM_MODE"] = "fake"
 os.environ["SESSION_SECRET"] = "test-session-secret-at-least-32-characters"
 os.environ.pop("APP_USERNAME", None)
 os.environ.pop("APP_PASSWORD_HASH", None)
@@ -1138,6 +1139,124 @@ class TestResumeWorkflow:
         )
         assert response.status_code == 422
         assert "Skill lacks" in response.json()["detail"]
+
+
+class TestLLMRuntimeWeb:
+    def _generate(self, application_id: int) -> dict:
+        with patch(
+            "job_copilot.resume_tailor._llm_tailor",
+            return_value=_fake_resume_result(),
+        ):
+            response = client.post(
+                f"/api/applications/{application_id}/resume-tailor"
+            )
+        assert response.status_code == 201, response.text
+        return response.json()
+
+    def test_runtime_endpoint_exposes_only_safe_metadata(self):
+        from types import SimpleNamespace
+
+        config = SimpleNamespace(llm={
+            "provider": "test-provider",
+            "api_key": "super-secret-api-key",
+            "base_url": "https://llm.invalid",
+            "model_analysis": "analysis-model",
+            "model_drafting": "draft-model",
+        })
+        with patch("job_copilot.llm_runtime.load_config", return_value=config):
+            response = client.get("/api/llm/runtime")
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["mode"] == "fake"
+        assert payload["provider"] == "test-provider"
+        assert payload["operations"]["resume_tailor"]["model"] == "draft-model"
+        serialized = json.dumps(payload)
+        assert "super-secret-api-key" not in serialized
+        assert "api_key" not in serialized.lower()
+
+    def test_dry_run_does_not_create_resume_version_or_accept_client_override(self):
+        application_id = _seed_resume_application()
+
+        with patch.dict(os.environ, {"LLM_MODE": "dry-run"}):
+            response = client.post(
+                f"/api/applications/{application_id}/resume-tailor",
+                json={"llm_mode": "live"},
+            )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["status"] == "dry-run"
+        assert payload["created"] is False
+        assert payload["runtime"]["mode"] == "dry-run"
+        assert payload["request"]["network_request_sent"] is False
+
+        session = get_session()
+        assert session.query(ResumeVersion).count() == 0
+        assert session.query(ApplicationEvent).filter(
+            ApplicationEvent.event_type == "resume_created"
+        ).count() == 0
+        session.close()
+
+    def test_fake_resume_version_is_explicitly_marked(self):
+        application_id = _seed_resume_application()
+
+        response = client.post(
+            f"/api/applications/{application_id}/resume-tailor"
+        )
+
+        assert response.status_code == 201, response.text
+        payload = response.json()
+        assert payload["source"] == "fake"
+        assert payload["generation_method"] == "llm_fake"
+
+    def test_live_without_api_key_is_rejected_without_persistence(self):
+        from types import SimpleNamespace
+
+        application_id = _seed_resume_application()
+        config = SimpleNamespace(llm={
+            "provider": "test-provider",
+            "api_key": "",
+            "base_url": "https://llm.invalid",
+            "model_drafting": "draft-model",
+        })
+        with patch.dict(os.environ, {"LLM_MODE": "live"}), patch(
+            "job_copilot.llm_runtime.load_config", return_value=config
+        ):
+            response = client.post(
+                f"/api/applications/{application_id}/resume-tailor"
+            )
+
+        assert response.status_code == 503
+        assert "API Key" in response.json()["detail"]
+        session = get_session()
+        assert session.query(ResumeVersion).count() == 0
+        session.close()
+
+    def test_stubbed_live_resume_version_is_explicitly_marked(self):
+        from types import SimpleNamespace
+
+        application_id = _seed_resume_application()
+        result = _fake_resume_result()
+        result["_llm_source"] = "live"
+        config = SimpleNamespace(llm={
+            "provider": "test-provider",
+            "api_key": "test-key",
+            "base_url": "https://llm.invalid",
+            "model_drafting": "draft-model",
+        })
+        with patch.dict(os.environ, {"LLM_MODE": "live"}), patch(
+            "job_copilot.llm_runtime.load_config", return_value=config
+        ), patch(
+            "job_copilot.resume_tailor._llm_tailor", return_value=result
+        ):
+            response = client.post(
+                f"/api/applications/{application_id}/resume-tailor"
+            )
+
+        assert response.status_code == 201, response.text
+        assert response.json()["source"] == "live"
+        assert response.json()["generation_method"] == "llm_live"
 
     def test_resume_endpoints_return_real_auth_and_not_found_statuses(self):
         application_id = _seed_resume_application()

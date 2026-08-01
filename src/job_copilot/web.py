@@ -17,7 +17,7 @@ from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Query, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, FileResponse, HTMLResponse
+from fastapi.responses import StreamingResponse, FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select, func, and_, case, text
@@ -30,6 +30,11 @@ from .models import (
 )
 from .importer import update_application_stage, import_tracking_csv
 from .config import DATA_DIR
+from .llm_runtime import (
+    LLMRuntimeError,
+    runtime_overview,
+    split_persisted_model,
+)
 from .auth import (
     AuthFailure, add_session_middleware, auth_error_payload,
     cmd_hash_password, get_account_source_type, register_auth_routes,
@@ -194,6 +199,18 @@ def health():
     )
 
 
+# ---------- LLM Runtime ----------
+
+@app.get("/api/llm/runtime")
+def llm_runtime():
+    try:
+        return runtime_overview()
+    except LLMRuntimeError as exc:
+        raise HTTPException(
+            status_code=exc.status_code, detail=exc.detail
+        ) from exc
+
+
 # ---------- Dashboard ----------
 
 @app.get("/api/dashboard/summary")
@@ -309,6 +326,7 @@ def _job_row(
         "application_stage": j.application.stage if j.application else None,
     }
     if include_score and j.score:
+        score_source, score_model = split_persisted_model(j.score.model)
         d["score"] = {
             "fit_score": j.score.fit_score,
             "verdict": j.score.verdict,
@@ -317,6 +335,8 @@ def _job_row(
             "reasons": j.score.reasons,
             "highlights": j.score.highlights,
             "gaps": j.score.gaps,
+            "source": score_source,
+            "model": score_model,
         }
     return d
 
@@ -815,10 +835,12 @@ def list_resume_versions(application_id: int):
     return _run_resume_action(get_versions, application_id)
 
 
-@app.post("/api/applications/{application_id}/resume-tailor", status_code=201)
+@app.post("/api/applications/{application_id}/resume-tailor")
 def generate_resume(application_id: int):
     from .resume_tailor import tailor_resume
-    return _run_resume_action(tailor_resume, application_id)
+    result = _run_resume_action(tailor_resume, application_id)
+    status_code = 200 if result.get("status") == "dry-run" else 201
+    return JSONResponse(content=result, status_code=status_code)
 
 
 @app.get("/api/resume-versions/{version_id}")
@@ -932,6 +954,14 @@ def cmd_serve(host: str = "127.0.0.1", port: int = 8000) -> None:
     print(f"Job Copilot Web → http://{host}:{port}")
     print(f"登录页面 → http://{host}:{port}/login")
     print(f"账号来源 → {get_account_source_type()}")
+    try:
+        llm_info = runtime_overview()
+        print(
+            f"LLM 模式 → {llm_info['label']} "
+            f"({llm_info['provider']}/{llm_info['model']})"
+        )
+    except LLMRuntimeError as exc:
+        print(f"LLM 模式 → 配置错误 ({exc.code})")
     if os.getenv("APP_ENV") != "production":
         print(f"API 文档 → http://{host}:{port}/docs")
     uvicorn.run(

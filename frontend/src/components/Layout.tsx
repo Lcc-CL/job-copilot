@@ -3,8 +3,10 @@ import { LayoutDashboard, ListChecks, RefreshCw, Wifi, WifiOff, Database, Calend
 import { useQueryClient } from "@tanstack/react-query";
 import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
-import { fetchDashboard } from "../api/client";
+import { fetchDashboard, fetchLLMRuntime } from "../api/client";
+import type { LLMRuntimeInfo } from "../api/types";
 import { useAuth } from "./AuthProvider";
+import { llmModeBadgeClass } from "../llmRuntime";
 
 const PAGE_TITLES: Record<string, string> = {
   "/": "Dashboard",
@@ -21,6 +23,7 @@ export default function Layout() {
   const { t, i18n } = useTranslation();
   const [ts, setTs] = useState(new Date());
   const [online, setOnline] = useState(true);
+  const [llmRuntime, setLlmRuntime] = useState<LLMRuntimeInfo | null>(null);
 
   useEffect(() => {
     const check = () => {
@@ -31,6 +34,12 @@ export default function Layout() {
     check();
     const iv = setInterval(check, 30_000);
     return () => clearInterval(iv);
+  }, []);
+
+  useEffect(() => {
+    fetchLLMRuntime()
+      .then(setLlmRuntime)
+      .catch(() => setLlmRuntime(null));
   }, []);
 
   const handleRefresh = () => {
@@ -87,6 +96,15 @@ export default function Layout() {
             <span style={{ color: "var(--text-secondary)", fontWeight: 400, fontSize: 14 }}>
               {PAGE_TITLES[loc.pathname] || "Job Copilot"}
             </span>
+            {llmRuntime && (
+              <span
+                className={`badge ${llmModeBadgeClass(llmRuntime.mode)}`}
+                style={{ marginLeft: 10, verticalAlign: "middle" }}
+                title={`${llmRuntime.message} · ${llmRuntime.provider}/${llmRuntime.model}`}
+              >
+                LLM：{llmRuntime.label}
+              </span>
+            )}
           </div>
           <div className="topbar-right">
             <div style={{ display: "flex", gap: 2, fontSize: 12, fontWeight: 500 }}>

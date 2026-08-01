@@ -2,14 +2,22 @@ import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import {
   fetchResumeVersions,
+  fetchLLMRuntime,
   generateResume,
   markResumeVersionUsed,
   reviewResumeVersion,
   updateResumeVersion,
 } from "../api/client";
 import { AlertTriangle, Loader2, Check, Copy, Sparkles, ChevronDown, ChevronRight } from "lucide-react";
-import type { ResumeVersion, ExperienceBullet } from "../api/types";
+import type { ResumeVersion, ExperienceBullet, LLMRuntimeInfo } from "../api/types";
 import { canEditResumeVersion, getResumeWorkflowAction } from "./resumeWorkflow";
+import {
+  buildLiveConfirmation,
+  generationSourceLabel,
+  isDryRunPreview,
+  liveConfirmationKey,
+  llmModeBadgeClass,
+} from "../llmRuntime";
 
 interface Props {
   applicationId: number;
@@ -61,26 +69,61 @@ export default function ResumeTailor({ applicationId }: Props) {
   const [expandedVersion, setExpandedVersion] = useState<number | null>(null);
   const [toast, setToast] = useState("");
   const [showVersions, setShowVersions] = useState(false);
+  const [llmRuntime, setLlmRuntime] = useState<LLMRuntimeInfo | null>(null);
 
-  useEffect(() => { loadVersions(); }, [applicationId]);
-
-  async function loadVersions() {
+  useEffect(() => {
+    let cancelled = false;
     setLoading(true);
     setError("");
-    try {
-      const v = await fetchResumeVersions(applicationId);
-      setVersions(v);
-    } catch (e: unknown) {
-      setError(errorMessage(e, t("resume.loadFailed")));
-    }
-    finally { setLoading(false); }
-  }
+    fetchResumeVersions(applicationId)
+      .then((items) => {
+        if (!cancelled) setVersions(items);
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) setError(errorMessage(e, t("resume.loadFailed")));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    fetchLLMRuntime()
+      .then((runtime) => {
+        if (!cancelled) setLlmRuntime(runtime);
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) setError(errorMessage(e, t("resume.runtimeFailed")));
+      });
+    return () => { cancelled = true; };
+  }, [applicationId, t]);
 
   async function handleGenerate() {
     setGenerating(true);
     setError("");
+    let confirmedLiveKey: string | null = null;
     try {
-      const rv = await generateResume(applicationId);
+      const runtime = llmRuntime || await fetchLLMRuntime();
+      setLlmRuntime(runtime);
+      if (runtime.mode === "live") {
+        const key = liveConfirmationKey(runtime, "resume_tailor");
+        if (sessionStorage.getItem(key) !== "true") {
+          const confirmed = window.confirm(
+            buildLiveConfirmation(runtime, "resume_tailor"),
+          );
+          if (!confirmed) return;
+          confirmedLiveKey = key;
+        }
+      }
+
+      const response = await generateResume(applicationId);
+      if (confirmedLiveKey) sessionStorage.setItem(confirmedLiveKey, "true");
+      if (isDryRunPreview(response)) {
+        setToast(
+          `${response.message} · ${response.runtime.provider}/${response.runtime.model}`
+          + ` · ${response.runtime.operation_label}`,
+        );
+        setTimeout(() => setToast(""), 4000);
+        return;
+      }
+      const rv = response;
       setVersions((prev) => [rv, ...prev]);
       setExpandedVersion(rv.id);
       setToast(t("resume.generated"));
@@ -156,6 +199,19 @@ export default function ResumeTailor({ applicationId }: Props) {
         </button>
       </div>
 
+      {llmRuntime && llmRuntime.mode !== "live" && (
+        <div style={{ background: "var(--warning-light)", padding: 8, borderRadius: 6, fontSize: 12, marginBottom: 8 }}>
+          <span className={`badge ${llmModeBadgeClass(llmRuntime.mode)}`} style={{ marginRight: 6 }}>
+            {llmRuntime.label}
+          </span>
+          {llmRuntime.message}
+          <div style={{ marginTop: 4, color: "var(--text-secondary)" }}>
+            {llmRuntime.provider}/{llmRuntime.operations.resume_tailor?.model || llmRuntime.model}
+            {" · "}{llmRuntime.operations.resume_tailor?.label || "定制简历生成"}
+          </div>
+        </div>
+      )}
+
       {error && (
         <div style={{ background: "var(--danger-light)", padding: 8, borderRadius: 6, fontSize: 12, marginBottom: 8 }}>
           <AlertTriangle size={12} /> {error}
@@ -188,8 +244,8 @@ export default function ResumeTailor({ applicationId }: Props) {
                     const isLow = gap.context_quality === 'LOW' || v.generation_method === 'low_context_rule_based';
                     return (
                       <>
-                        <span className={`badge ${v.generation_method === 'llm' ? 'badge-green' : 'badge-yellow'}`} style={{ marginLeft: 8, fontSize: 10 }}>
-                          {v.generation_method === 'llm' ? 'AI' : v.generation_method === 'low_context_rule_based' ? 'DRAFT' : 'RULE'}
+                        <span className={`badge ${v.generation_method === 'llm_live' ? 'badge-green' : 'badge-yellow'}`} style={{ marginLeft: 8, fontSize: 10 }}>
+                          {generationSourceLabel(v.generation_method)}
                         </span>
                         {isLow && (
                           <span className="badge badge-red" style={{ marginLeft: 4, fontSize: 10 }}>LOW_CONTEXT</span>
@@ -227,7 +283,7 @@ export default function ResumeTailor({ applicationId }: Props) {
                         </div>
                       );
                     }
-                    if (v.generation_method !== 'llm') {
+                    if (!v.generation_method?.startsWith('llm')) {
                       return (
                         <div style={{ background: "var(--warning-light)", padding: 8, borderRadius: 6, marginBottom: 8, fontSize: 11 }}>
                           ⚠ {t("resume.ruleNotice")}
