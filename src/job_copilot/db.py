@@ -16,78 +16,27 @@ from .config import DATA_DIR
 
 DB_PATH = DATA_DIR / "jobcopilot.db"
 
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS jobs (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    platform      TEXT NOT NULL,
-    job_id        TEXT NOT NULL,
-    url           TEXT,
-    title         TEXT,
-    company       TEXT,
-    company_size  TEXT,
-    industry      TEXT,
-    salary_text   TEXT,
-    salary_min    INTEGER,
-    salary_max    INTEGER,
-    salary_months INTEGER,
-    city          TEXT,
-    district      TEXT,
-    experience    TEXT,
-    degree        TEXT,
-    tags          TEXT,
-    hr_name       TEXT,
-    hr_title      TEXT,
-    hr_active     TEXT,
-    jd_text       TEXT,
-    search_keyword TEXT,
-    search_city    TEXT,
-    collected_at   TEXT NOT NULL,
-    UNIQUE (platform, job_id)
-);
-
-CREATE TABLE IF NOT EXISTS job_vectors (
-    job_pk    INTEGER PRIMARY KEY REFERENCES jobs (id) ON DELETE CASCADE,
-    dim       INTEGER NOT NULL,
-    vec       BLOB NOT NULL,
-    model     TEXT,
-    embedded_at TEXT
-);
-
-CREATE TABLE IF NOT EXISTS job_scores (
-    job_pk      INTEGER PRIMARY KEY REFERENCES jobs (id) ON DELETE CASCADE,
-    fit_score   REAL,
-    verdict     TEXT,
-    archetype   TEXT,
-    seniority_ok INTEGER,
-    authenticity TEXT,
-    reasons     TEXT,
-    highlights  TEXT,
-    gaps        TEXT,
-    model       TEXT,
-    scored_at   TEXT
-);
-
-CREATE TABLE IF NOT EXISTS applications (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    job_pk       INTEGER REFERENCES jobs (id),
-    company      TEXT,
-    title        TEXT,
-    group_tag    TEXT,
-    status       TEXT NOT NULL DEFAULT '已评估',
-    score        REAL,
-    report_path  TEXT,
-    applied_at   TEXT,
-    last_event_at TEXT,
-    note         TEXT
-);
-"""
-
-
 def connect(path: Path = DB_PATH) -> sqlite3.Connection:
+    """Open SQLite; new files are initialized from SQLAlchemy ORM metadata."""
     path.parent.mkdir(parents=True, exist_ok=True)
+    is_new = not path.exists() or path.stat().st_size == 0
+    if is_new:
+        from sqlalchemy import create_engine
+        from .database import init_db
+
+        engine = create_engine(
+            f"sqlite:///{path.resolve()}",
+            connect_args={"check_same_thread": False},
+        )
+        try:
+            init_db(engine=engine, create_backup=False)
+        finally:
+            engine.dispose()
+
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
-    conn.executescript(_SCHEMA)
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA journal_mode=WAL")
     return conn
 
 

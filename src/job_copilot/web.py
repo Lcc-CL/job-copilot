@@ -838,7 +838,7 @@ if FRONTEND_DIR.exists():
 
 def cmd_init_db() -> str:
     """幂等初始化数据库（创建新表 + 列迁移）。"""
-    logs = init_db(drop_applications=False)
+    logs = init_db()
     if logs:
         return "✓ 迁移已执行:\n" + "\n".join(f"  - {m}" for m in logs)
     return "✓ 数据库已是最新状态，无需迁移。"

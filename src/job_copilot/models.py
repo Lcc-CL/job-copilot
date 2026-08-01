@@ -8,25 +8,28 @@
 
 from __future__ import annotations
 
-import datetime
 from typing import Optional
 
 from sqlalchemy import (
-    Column,
     Integer,
     String,
     Text,
     Float,
     ForeignKey,
     UniqueConstraint,
-    create_engine,
-    event,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
 class Base(DeclarativeBase):
     pass
+
+
+class SchemaVersion(Base):
+    __tablename__ = "schema_version"
+
+    version: Mapped[str] = mapped_column(String, primary_key=True)
+    applied_at: Mapped[Optional[str]] = mapped_column(String)
 
 
 # ============================================================
@@ -229,143 +232,3 @@ class SyncRun(Base):
     skipped_count: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String, default="running")
     error_message: Mapped[Optional[str]] = mapped_column(Text)
-
-
-# ============================================================
-# 辅助：为已有表添加新列（幂等迁移）
-# ============================================================
-
-def _column_exists(engine, table: str, column: str) -> bool:
-    """检测列是否存在（兼容 SQLite 和 PostgreSQL）。"""
-    import sqlalchemy
-    insp = sqlalchemy.inspect(engine)
-    cols = {c["name"] for c in insp.get_columns(table)}
-    return column in cols
-
-
-# 需要向 jobs 表添加的新列定义及其默认值
-_JOBS_NEW_COLUMNS: list[tuple[str, str, str]] = [
-    # (列名, SQL类型, 默认值)
-    ("jd_status", "TEXT", "'PENDING_JD'"),
-    ("original_score", "REAL", None),
-    ("enriched_score", "REAL", None),
-    ("recommendation", "TEXT", None),
-    ("greeting_text", "TEXT", None),
-    ("created_at", "TEXT", None),
-    ("updated_at", "TEXT", None),
-]
-
-
-def run_migrations(engine, *, drop_applications: bool = False) -> list[str]:
-    """执行幂等迁移，返回已执行的迁移名称列表。
-
-    安全约束：
-    - 不删除或修改现有 jobs/job_vectors/job_scores 列
-    - application_events 和 sync_runs 全新创建
-    - applications 表仅在 drop_applications=True 且表为空时重建
-    """
-    applied = []
-
-    with engine.begin() as conn:
-        # --- jobs 新列 ---
-        for col_name, col_type, default_val in _JOBS_NEW_COLUMNS:
-            if not _column_exists(engine, "jobs", col_name):
-                default_clause = f" DEFAULT {default_val}" if default_val else ""
-                conn.exec_driver_sql(
-                    f'ALTER TABLE jobs ADD COLUMN {col_name} {col_type}{default_clause}'
-                )
-                applied.append(f"jobs.{col_name}")
-
-        # --- application_events ---
-        if "application_events" not in _existing_tables(engine):
-            conn.exec_driver_sql("""
-                CREATE TABLE IF NOT EXISTS application_events (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    application_id INTEGER NOT NULL
-                        REFERENCES applications(id) ON DELETE CASCADE,
-                    event_type TEXT NOT NULL,
-                    from_stage TEXT,
-                    to_stage TEXT,
-                    content TEXT,
-                    occurred_at TEXT
-                )
-            """)
-            applied.append("application_events")
-
-        # --- sync_runs ---
-        if "sync_runs" not in _existing_tables(engine):
-            conn.exec_driver_sql("""
-                CREATE TABLE IF NOT EXISTS sync_runs (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    started_at TEXT,
-                    finished_at TEXT,
-                    inserted_count INTEGER DEFAULT 0,
-                    updated_count INTEGER DEFAULT 0,
-                    skipped_count INTEGER DEFAULT 0,
-                    status TEXT DEFAULT 'running',
-                    error_message TEXT
-                )
-            """)
-            applied.append("sync_runs")
-
-        # --- resume_profiles ---
-        if "resume_profiles" not in _existing_tables(engine):
-            conn.exec_driver_sql("""
-                CREATE TABLE IF NOT EXISTS resume_profiles (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT NOT NULL,
-                    content_text TEXT,
-                    content_structured_json TEXT,
-                    is_master INTEGER DEFAULT 0,
-                    created_at TEXT,
-                    updated_at TEXT
-                )
-            """)
-            applied.append("resume_profiles")
-
-        # --- resume_versions ---
-        if "resume_versions" not in _existing_tables(engine):
-            conn.exec_driver_sql("""
-                CREATE TABLE IF NOT EXISTS resume_versions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    application_id INTEGER NOT NULL
-                        REFERENCES applications(id) ON DELETE CASCADE,
-                    resume_profile_id INTEGER
-                        REFERENCES resume_profiles(id) ON DELETE SET NULL,
-                    version_name TEXT,
-                    summary_text TEXT,
-                    skills_json TEXT,
-                    experience_bullets_json TEXT,
-                    gap_analysis_json TEXT,
-                    full_text TEXT,
-                    generation_method TEXT DEFAULT 'llm',
-                    status TEXT DEFAULT 'DRAFT',
-                    created_at TEXT,
-                    updated_at TEXT
-                )
-            """)
-            applied.append("resume_versions")
-
-        # --- applications 重建 ---
-        if drop_applications:
-            count = conn.exec_driver_sql(
-                "SELECT COUNT(*) as n FROM applications"
-            ).scalar()
-            if count == 0:
-                conn.exec_driver_sql("DROP TABLE IF EXISTS applications")
-                # 同时删掉 application_events（外键依赖）
-                conn.exec_driver_sql("DROP TABLE IF EXISTS application_events")
-                Base.metadata.create_all(bind=engine, tables=[
-                    Base.metadata.tables["applications"],
-                    Base.metadata.tables["application_events"],
-                ])
-                applied.append("applications (recreated)")
-                applied.append("application_events (recreated)")
-
-    return applied
-
-
-def _existing_tables(engine) -> set:
-    import sqlalchemy
-    insp = sqlalchemy.inspect(engine)
-    return set(insp.get_table_names())

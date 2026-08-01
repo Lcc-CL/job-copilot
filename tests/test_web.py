@@ -36,9 +36,7 @@ def _reset_db():
     """每个测试前重建数据库表。"""
     engine = get_engine()
     Base.metadata.drop_all(bind=engine)
-    Base.metadata.create_all(bind=engine)
-    from job_copilot.models import run_migrations
-    run_migrations(engine)
+    init_db(engine=engine, create_backup=False)
     client.cookies.clear()
     login = client.post(
         "/api/auth/login",
@@ -74,6 +72,9 @@ class TestModelCreation:
         assert "applications" in tables
         assert "application_events" in tables
         assert "sync_runs" in tables
+        assert "resume_profiles" in tables
+        assert "resume_versions" in tables
+        assert "schema_version" in tables
 
     def test_job_columns(self):
         engine = get_engine()
@@ -393,6 +394,20 @@ class TestAPICRUD:
             )
         assert r.status_code == 401
 
+    def test_empty_resume_versions_returns_empty_list(self):
+        session = get_session()
+        j = Job(platform="boss", job_id="resume-empty", title="岗", company="司",
+                collected_at="2026-01-01T00:00:00Z")
+        session.add(j); session.commit()
+        application = Application(job_pk=j.id, stage="SHORTLISTED", channel="boss")
+        session.add(application); session.commit()
+        application_id = application.id
+        session.close()
+
+        r = client.get(f"/api/applications/{application_id}/resume-versions")
+        assert r.status_code == 200
+        assert r.json() == []
+
     def test_create_application(self):
         session = get_session()
         j = Job(platform="boss", job_id="api-3", title="岗", company="司",
@@ -463,7 +478,7 @@ class TestExistingCommandsUnaffected:
         session.close()
 
         # Use the raw sqlite3 connection from db.py
-        conn = db.connect()
+        conn = db.connect(Path(_tmp_db.name))
         stats = db.job_stats(conn)
         assert stats["total"] >= 1
         assert "boss" in str(stats["by_platform"])
