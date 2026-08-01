@@ -7,11 +7,11 @@ from __future__ import annotations
 
 import datetime
 import json
+import re
 from typing import Optional
 
-from sqlalchemy import text as sa_text
 from .database import get_session
-from .models import Application, Job, ResumeProfile, ResumeVersion
+from .models import Application, ApplicationEvent, ResumeProfile, ResumeVersion
 from .config import load_config, RESUME_DIR
 
 
@@ -22,7 +22,13 @@ TAILOR_SYSTEM = """你是高级简历顾问。根据母版简历和岗位JD，�
 输出JSON：
 {
   "tailored_summary": "2-3句职业摘要",
+  "summary_evidence": [
+    {"claim": "摘要中的原句", "source_text": "母版简历中的直接证据"}
+  ],
   "reordered_skills": ["按JD匹配度排序的技能列表"],
+  "skills_evidence": [
+    {"skill": "技能名", "source_text": "母版简历中的直接证据"}
+  ],
   "experience_bullets": [
     {
       "original_text": "原文",
@@ -43,6 +49,18 @@ risk_level规则:
 - SAFE: 纯重排或表达优化，有明确证据
 - REVIEW: 包含合理推断，需人工确认
 - BLOCKED: 缺少事实证据，不要放进full_resume_text"""
+
+
+class ResumeWorkflowError(Exception):
+    """可安全映射为真实 HTTP 状态码的简历工作流错误。"""
+
+    def __init__(self, status_code: int, detail: str):
+        super().__init__(detail)
+        self.status_code = status_code
+        self.detail = detail
+
+
+RESUME_EVENT_TYPES = {"resume_created", "resume_reviewed", "resume_used"}
 
 
 def _now() -> str:
@@ -114,16 +132,16 @@ def tailor_resume(application_id: int) -> dict:
     try:
         app = session.get(Application, application_id)
         if not app:
-            return {"error": "Application not found", "status": 404}
+            raise ResumeWorkflowError(404, "Application not found")
         if not app.job:
-            return {"error": "No job linked", "status": 400}
+            raise ResumeWorkflowError(422, "Application has no linked job")
 
         job = app.job
         master = _get_or_create_master_profile()
         resume = master.content_text or ""
 
         if not resume.strip():
-            return {"error": "Master resume is empty", "status": 400}
+            raise ResumeWorkflowError(422, "Master resume is empty")
 
         jd_text = (job.jd_text or "").strip()
         title = job.title or ""
@@ -161,10 +179,26 @@ def tailor_resume(application_id: int) -> dict:
 
         # Evidence gate on summary and skills
         unsupported = result.get("unsupported_requirements", [])
-        summary_text = _clean_summary(
-            result.get("tailored_summary", ""), unsupported)
-        skills_list = _clean_skills(
-            result.get("reordered_skills", []), unsupported, resume)
+        summary_text, summary_evidence = _clean_summary(
+            result.get("tailored_summary", ""),
+            result.get("summary_evidence", []),
+            unsupported,
+            resume,
+        )
+        skills_list, skills_evidence = _clean_skills(
+            result.get("reordered_skills", []),
+            result.get("skills_evidence", []),
+            unsupported,
+            resume,
+        )
+        evidence = {
+            "summary": summary_evidence,
+            "skills": skills_evidence,
+        }
+        _validate_generated_evidence(
+            summary_text, skills_list, bullets, evidence, resume
+        )
+        now = _now()
 
         rv = ResumeVersion(
             application_id=application_id,
@@ -179,18 +213,24 @@ def tailor_resume(application_id: int) -> dict:
                 "hard_blockers": result.get("hard_blockers", []),
                 "warnings": result.get("warnings", []),
                 "context_quality": "FULL" if has_full_jd else "LOW",
+                "evidence": evidence,
             }, ensure_ascii=False),
             full_text=_build_full_text(summary_text, skills_list, bullets),
             generation_method=method,
             status="DRAFT",
-            created_at=_now(),
-            updated_at=_now(),
+            created_at=now,
+            updated_at=now,
         )
         session.add(rv)
+        session.flush()
+        _add_resume_event(
+            session, rv, "resume_created", None, "DRAFT", now
+        )
         session.commit()
         session.refresh(rv)
 
-        return _version_row(rv)
+        events = _status_events(session, rv.application_id)
+        return _version_row(rv, events.get(rv.id, []))
     finally:
         session.close()
 
@@ -236,6 +276,8 @@ def _restore_original_texts(bullets: list, master: str) -> list:
             if not found:
                 b["risk_level"] = "BLOCKED"
                 b["reason"] = (b.get("reason", "") + " [BLOCKED: original_text not found in master resume]").strip()
+            elif not str(b.get("evidence_reference", "")).strip():
+                b["evidence_reference"] = orig
 
     return bullets
 
@@ -262,12 +304,10 @@ def _llm_tailor(resume: str, jd: str, title: str, company: str, score: dict) -> 
 
 
 def _rule_tailor(resume: str, jd: str, title: str, company: str, score: dict) -> dict:
-    """规则降级：关键词匹配 + 技能排序 + 模板化改写。"""
+    """规则降级：只抽取母版原文和已存在技能，不生成新事实。"""
     resume_lower = resume.lower()
-    jd_lower = jd.lower()
 
     # Extract keywords from JD
-    import re
     keywords = list(set(re.findall(r'[A-Za-z+#.]+', jd)))
     keywords = [k for k in keywords if len(k) > 1 and k.lower() not in
                 ('the', 'a', 'an', 'is', 'are', 'and', 'or', 'to', 'in', 'of', 'for')]
@@ -275,35 +315,47 @@ def _rule_tailor(resume: str, jd: str, title: str, company: str, score: dict) ->
     matched = [k for k in keywords if k.lower() in resume_lower]
     unmatched = [k for k in keywords if k.lower() not in resume_lower][:10]
 
-    # Simple template
-    full = (
-        f"# 定制简历\n\n"
-        f"## 目标岗位\n{title} @ {company}\n\n"
-        f"## 母版简历\n{resume[:3000]}\n\n"
-        f"## 匹配关键词\n{', '.join(matched[:20])}\n\n"
-        f"## 建议补充\n{', '.join(unmatched[:10])}\n\n"
-        f"> 生成方式: 规则匹配。使用LLM可获得更精准的定制。"
-    )
+    evidence_lines = _master_evidence_lines(resume)
+    summary_source = _best_evidence_line(evidence_lines, jd, title)
+    summary_evidence = []
+    if summary_source:
+        summary_evidence.append({
+            "claim": summary_source,
+            "source_text": summary_source,
+        })
+
+    skills_evidence = []
+    for skill in matched[:15]:
+        source = next(
+            (line for line in evidence_lines if skill.lower() in line.lower()),
+            skill,
+        )
+        skills_evidence.append({"skill": skill, "source_text": source})
 
     return {
-        "tailored_summary": f"针对{title}岗位的定制简历（规则生成）",
+        "tailored_summary": summary_source,
+        "summary_evidence": summary_evidence,
         "reordered_skills": matched[:15],
+        "skills_evidence": skills_evidence,
         "experience_bullets": [],
         "matched_keywords": matched,
         "unsupported_requirements": unmatched,
         "hard_blockers": score.get("hard_blockers", []),
-        "full_resume_text": full,
-        "warnings": ["规则生成版本，建议使用LLM重新生成以获得更好效果"],
+        "full_resume_text": "",
+        "warnings": ["规则生成版本仅抽取母版原文，未执行经历改写"],
     }
 
 
 def get_versions(application_id: int) -> list:
     session = get_session()
     try:
+        if not session.get(Application, application_id):
+            raise ResumeWorkflowError(404, "Application not found")
         rows = session.query(ResumeVersion).filter(
             ResumeVersion.application_id == application_id
         ).order_by(ResumeVersion.created_at.desc()).all()
-        return [_version_row(r) for r in rows]
+        events = _status_events(session, application_id)
+        return [_version_row(r, events.get(r.id, [])) for r in rows]
     finally:
         session.close()
 
@@ -312,7 +364,10 @@ def get_version(version_id: int) -> Optional[dict]:
     session = get_session()
     try:
         rv = session.get(ResumeVersion, version_id)
-        return _version_row(rv) if rv else None
+        if not rv:
+            return None
+        events = _status_events(session, rv.application_id)
+        return _version_row(rv, events.get(rv.id, []))
     finally:
         session.close()
 
@@ -323,38 +378,92 @@ def update_version(version_id: int, data: dict) -> Optional[dict]:
         rv = session.get(ResumeVersion, version_id)
         if not rv:
             return None
+        protected = {
+            "status", "created_at", "updated_at", "application_id",
+            "resume_profile_id",
+        }
+        if protected.intersection(data):
+            raise ResumeWorkflowError(
+                422, "Resume status and audit fields are read-only"
+            )
+        if rv.status != "DRAFT":
+            raise ResumeWorkflowError(
+                409, "Only DRAFT resume versions can be edited"
+            )
+        allowed = {"version_name", "experience_bullets_json"}
+        unknown = set(data) - allowed
+        if unknown:
+            fields = ", ".join(sorted(unknown))
+            raise ResumeWorkflowError(422, f"Unsupported resume fields: {fields}")
         for k, v in data.items():
-            if hasattr(rv, k) and k != "id":
-                setattr(rv, k, v)
+            setattr(rv, k, v)
+        if "experience_bullets_json" in data:
+            bullets = _parse_json(data["experience_bullets_json"])
+            skills = _parse_json(rv.skills_json)
+            rv.full_text = _build_full_text(
+                rv.summary_text or "", skills, bullets
+            )
         rv.updated_at = _now()
         session.commit()
         session.refresh(rv)
-        return _version_row(rv)
+        events = _status_events(session, rv.application_id)
+        return _version_row(rv, events.get(rv.id, []))
     finally:
         session.close()
 
 
-def mark_used(version_id: int) -> Optional[dict]:
+def review_version(version_id: int) -> Optional[dict]:
     session = get_session()
     try:
         rv = session.get(ResumeVersion, version_id)
         if not rv:
             return None
-        # Block mark-used for low-context versions
-        gap = json.loads(rv.gap_analysis_json or "{}")
-        if gap.get("context_quality") == "LOW" or rv.generation_method == "low_context_rule_based":
-            return {"error": "Cannot mark USED: low context quality. Add full JD and regenerate.", "status": 400}
-        # Demote other USED versions for same application
-        session.execute(
-            sa_text("UPDATE resume_versions SET status='REVIEWED' "
-                    "WHERE application_id=:aid AND status='USED' AND id!=:vid"),
-            {"aid": rv.application_id, "vid": version_id},
+        if rv.status != "DRAFT":
+            raise ResumeWorkflowError(
+                409, f"Invalid resume transition: {rv.status} -> REVIEWED"
+            )
+        _validate_review_evidence(session, rv)
+        now = _now()
+        rv.status = "REVIEWED"
+        rv.updated_at = now
+        _add_resume_event(
+            session, rv, "resume_reviewed", "DRAFT", "REVIEWED", now
         )
-        rv.status = "USED"
-        rv.updated_at = _now()
         session.commit()
         session.refresh(rv)
-        return _version_row(rv)
+        events = _status_events(session, rv.application_id)
+        return _version_row(rv, events.get(rv.id, []))
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+def use_version(version_id: int) -> Optional[dict]:
+    session = get_session()
+    try:
+        rv = session.get(ResumeVersion, version_id)
+        if not rv:
+            return None
+        if rv.status != "REVIEWED":
+            raise ResumeWorkflowError(
+                409, f"Invalid resume transition: {rv.status} -> USED"
+            )
+        _validate_review_evidence(session, rv)
+        now = _now()
+        rv.status = "USED"
+        rv.updated_at = now
+        _add_resume_event(
+            session, rv, "resume_used", "REVIEWED", "USED", now
+        )
+        session.commit()
+        session.refresh(rv)
+        events = _status_events(session, rv.application_id)
+        return _version_row(rv, events.get(rv.id, []))
+    except Exception:
+        session.rollback()
+        raise
     finally:
         session.close()
 
@@ -394,7 +503,18 @@ def upsert_profile(data: dict) -> dict:
         session.close()
 
 
-def _version_row(rv: ResumeVersion) -> dict:
+def _version_row(rv: ResumeVersion, status_events: Optional[list] = None) -> dict:
+    events = status_events or []
+    reviewed_at = next(
+        (e["timestamp"] for e in events
+         if e["event_type"] == "resume_reviewed"),
+        None,
+    )
+    used_at = next(
+        (e["timestamp"] for e in events
+         if e["event_type"] == "resume_used"),
+        None,
+    )
     return {
         "id": rv.id,
         "application_id": rv.application_id,
@@ -408,7 +528,10 @@ def _version_row(rv: ResumeVersion) -> dict:
         "generation_method": rv.generation_method,
         "status": rv.status,
         "created_at": rv.created_at,
+        "reviewed_at": reviewed_at,
+        "used_at": used_at,
         "updated_at": rv.updated_at,
+        "status_events": events,
     }
 
 
@@ -438,25 +561,35 @@ def _build_full_text(summary: str, skills: list, bullets: list) -> str:
     return "\n".join(L)
 
 
-def _clean_summary(summary: str, unsupported: list) -> str:
-    """Remove unsupported claims from summary."""
-    import re
+def _clean_summary(
+    summary: str, evidence: list, unsupported: list, master: str
+) -> tuple[str, list]:
+    """只保留带有母版原文证据的 Summary claim；无安全回退。"""
     unsup_lower = {u.lower()[:20] for u in unsupported}
-    sentences = re.split(r'(?<=[。.！!？?])', summary)
-    clean = []
-    for s in sentences:
-        s_lower = s.lower()
-        blocked = False
-        for u in unsup_lower:
-            if u[:10] in s_lower:
-                blocked = True
-                break
-        if not blocked:
-            clean.append(s)
-    return ''.join(clean).strip() or summary[:80] + '…'
+    summary_norm = _normalize_text(summary)
+    verified = []
+    claims = []
+    for item in evidence if isinstance(evidence, list) else []:
+        if not isinstance(item, dict):
+            continue
+        claim = str(item.get("claim", "")).strip()
+        source = str(item.get("source_text", "")).strip()
+        if not claim or not _source_in_master(source, master):
+            continue
+        if _normalize_text(claim) not in summary_norm:
+            continue
+        if any(u[:10] and u[:10] in claim.lower() for u in unsup_lower):
+            continue
+        if not _numbers_supported(claim, source):
+            continue
+        claims.append(claim)
+        verified.append({"claim": claim, "source_text": source})
+    return " ".join(claims).strip(), verified
 
 
-def _clean_skills(skills: list, unsupported: list, master: str) -> list:
+def _clean_skills(
+    skills: list, evidence: list, unsupported: list, master: str
+) -> tuple[list, list]:
     """Filter skills against unsupported requirements and master evidence."""
     unsup_keywords = set()
     for u in unsupported:
@@ -466,7 +599,16 @@ def _clean_skills(skills: list, unsupported: list, master: str) -> list:
     # Also check for frameworks/tools not in master
     master_lower = master.lower()
     clean = []
+    verified_evidence = []
+    evidence_by_skill = {
+        str(item.get("skill", "")).strip().lower(): item
+        for item in evidence
+        if isinstance(item, dict) and item.get("skill")
+    }
     for s in skills:
+        if not isinstance(s, str) or not s.strip():
+            continue
+        s = s.strip()
         s_lower = s.lower()
         # Block if keyword matches unsupported
         if any(kw in s_lower for kw in unsup_keywords):
@@ -476,8 +618,216 @@ def _clean_skills(skills: list, unsupported: list, master: str) -> list:
             if fw in s_lower and fw not in master_lower:
                 break
         else:
+            item = evidence_by_skill.get(s_lower)
+            source = str(item.get("source_text", "")).strip() if item else ""
+            if s_lower not in master_lower or not _source_in_master(source, master):
+                continue
             clean.append(s)
-    return clean
+            verified_evidence.append({"skill": s, "source_text": source})
+    return clean, verified_evidence
+
+
+def _normalize_text(value: str) -> str:
+    import unicodedata
+
+    normalized = unicodedata.normalize("NFKC", value or "").lower()
+    return re.sub(r"\s+", " ", normalized).strip()
+
+
+def _source_in_master(source: str, master: str) -> bool:
+    source_norm = _normalize_text(source)
+    return bool(source_norm) and source_norm in _normalize_text(master)
+
+
+def _numbers_supported(claim: str, source: str) -> bool:
+    claim_numbers = set(re.findall(r"\d+(?:\.\d+)?%?", claim or ""))
+    source_numbers = set(re.findall(r"\d+(?:\.\d+)?%?", source or ""))
+    return claim_numbers.issubset(source_numbers)
+
+
+def _master_evidence_lines(master: str) -> list[str]:
+    lines = []
+    for raw in master.splitlines():
+        line = raw.strip().lstrip("-* ").strip()
+        if len(line) < 12 or line.startswith("#") or line.startswith(">"):
+            continue
+        if "@" in line or re.search(r"\b1\d{10}\b", line):
+            continue
+        lines.append(line)
+    return lines
+
+
+def _best_evidence_line(lines: list[str], jd: str, title: str) -> str:
+    if not lines:
+        return ""
+    target_tokens = {
+        token.lower()
+        for token in re.findall(r"[A-Za-z+#.]{2,}|[\u4e00-\u9fff]{2,}", f"{title} {jd}")
+    }
+
+    def score(line: str) -> tuple[int, int]:
+        line_lower = line.lower()
+        overlap = sum(1 for token in target_tokens if token in line_lower)
+        return overlap, min(len(line), 160)
+
+    return max(lines, key=score)
+
+
+def _validate_generated_evidence(
+    summary: str, skills: list, bullets: list, evidence: dict, master: str
+) -> None:
+    if not summary.strip() or not evidence.get("summary"):
+        raise ResumeWorkflowError(
+            422, "No evidence-backed Summary could be generated"
+        )
+
+    summary_items = [
+        item for item in evidence.get("summary", [])
+        if isinstance(item, dict)
+    ]
+    for item in summary_items:
+        claim = str(item.get("claim", "")).strip()
+        source = str(item.get("source_text", "")).strip()
+        if not _source_in_master(source, master):
+            raise ResumeWorkflowError(422, "Summary source is not in master resume")
+        if not _numbers_supported(claim, source):
+            raise ResumeWorkflowError(422, "Summary introduces unsupported numbers")
+    summary_claims = " ".join(
+        str(item.get("claim", "")).strip() for item in summary_items
+    ).strip()
+    if _normalize_text(summary_claims) != _normalize_text(summary):
+        raise ResumeWorkflowError(422, "Summary evidence does not match content")
+
+    skill_refs = {
+        str(item.get("skill", "")).strip().lower(): item
+        for item in evidence.get("skills", [])
+        if isinstance(item, dict)
+    }
+    for skill in skills:
+        item = skill_refs.get(str(skill).strip().lower())
+        source = str(item.get("source_text", "")).strip() if item else ""
+        if not item or not _source_in_master(source, master):
+            raise ResumeWorkflowError(
+                422, f"Skill lacks master-resume evidence: {skill}"
+            )
+
+    for bullet in bullets:
+        if not isinstance(bullet, dict) or bullet.get("risk_level") == "BLOCKED":
+            continue
+        original = str(bullet.get("original_text", "")).strip()
+        tailored = str(bullet.get("tailored_text", "")).strip()
+        reference = str(bullet.get("evidence_reference", "")).strip()
+        if not original or not tailored or not reference:
+            raise ResumeWorkflowError(422, "Experience bullet lacks evidence")
+        if not _source_in_master(original, master):
+            raise ResumeWorkflowError(422, "Experience evidence is not in master resume")
+        if not _numbers_supported(tailored, original):
+            raise ResumeWorkflowError(422, "Experience bullet introduces unsupported numbers")
+
+
+def _validate_review_evidence(session, rv: ResumeVersion) -> None:
+    app = session.get(Application, rv.application_id)
+    if not app or not app.job:
+        raise ResumeWorkflowError(422, "Resume version has no linked job")
+    jd_text = (app.job.jd_text or "").strip()
+    if len(jd_text) < 100:
+        raise ResumeWorkflowError(
+            422, "A complete JD is required before review"
+        )
+
+    gap = _parse_json_object(rv.gap_analysis_json)
+    if (gap.get("context_quality") != "FULL" or
+            rv.generation_method == "low_context_rule_based"):
+        raise ResumeWorkflowError(
+            422, "Low-context resume versions cannot be reviewed"
+        )
+
+    profile = session.get(ResumeProfile, rv.resume_profile_id)
+    master = profile.content_text or "" if profile else ""
+    if not master.strip():
+        raise ResumeWorkflowError(422, "Master resume evidence is unavailable")
+
+    skills = _parse_json(rv.skills_json)
+    bullets = _parse_json(rv.experience_bullets_json)
+    evidence = gap.get("evidence", {})
+    _validate_generated_evidence(
+        rv.summary_text or "", skills, bullets, evidence, master
+    )
+
+    unsafe_bullets = [
+        bullet for bullet in bullets
+        if isinstance(bullet, dict) and bullet.get("risk_level") == "REVIEW"
+    ]
+    safe_bullets = [
+        bullet for bullet in bullets
+        if isinstance(bullet, dict) and bullet.get("risk_level") == "SAFE"
+    ]
+    if unsafe_bullets:
+        raise ResumeWorkflowError(
+            422, "All REVIEW experience bullets must be accepted or rejected"
+        )
+    if not skills and not safe_bullets:
+        raise ResumeWorkflowError(
+            422, "Resume evidence is insufficient for review"
+        )
+
+
+def _add_resume_event(
+    session, rv: ResumeVersion, event_type: str,
+    from_status: Optional[str], to_status: str, occurred_at: str,
+) -> None:
+    content = json.dumps(
+        {
+            "resume_version_id": rv.id,
+            "application_id": rv.application_id,
+            "from_status": from_status,
+            "to_status": to_status,
+            "timestamp": occurred_at,
+            "version_name": rv.version_name,
+        },
+        ensure_ascii=False,
+    )
+    session.add(ApplicationEvent(
+        application_id=rv.application_id,
+        event_type=event_type,
+        from_stage=from_status,
+        to_stage=to_status,
+        content=content,
+        occurred_at=occurred_at,
+    ))
+
+
+def _status_events(session, application_id: int) -> dict[int, list[dict]]:
+    rows = session.query(ApplicationEvent).filter(
+        ApplicationEvent.application_id == application_id,
+        ApplicationEvent.event_type.in_(RESUME_EVENT_TYPES),
+    ).order_by(ApplicationEvent.id).all()
+    grouped: dict[int, list[dict]] = {}
+    for event in rows:
+        payload = _parse_json_object(event.content)
+        version_id = payload.get("resume_version_id")
+        if not isinstance(version_id, int):
+            continue
+        grouped.setdefault(version_id, []).append({
+            "id": event.id,
+            "event_type": event.event_type,
+            "resume_version_id": version_id,
+            "application_id": event.application_id,
+            "from_status": event.from_stage,
+            "to_status": event.to_stage,
+            "timestamp": event.occurred_at,
+        })
+    return grouped
+
+
+def _parse_json_object(val: Optional[str]) -> dict:
+    if not val:
+        return {}
+    try:
+        parsed = json.loads(val)
+        return parsed if isinstance(parsed, dict) else {}
+    except (json.JSONDecodeError, TypeError):
+        return {}
 
 
 def _parse_json(val: Optional[str]) -> list:

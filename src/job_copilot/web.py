@@ -10,6 +10,7 @@ from __future__ import annotations
 import csv
 import datetime
 import io
+import json
 import os
 from pathlib import Path
 from typing import Optional
@@ -139,6 +140,31 @@ class EventCreate(BaseModel):
     from_stage: Optional[str] = None
     to_stage: Optional[str] = None
     content: Optional[str] = None
+
+
+class ResumeVersionUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    version_name: Optional[str] = Field(None, min_length=1, max_length=200)
+    experience_bullets_json: Optional[str] = None
+
+    @field_validator("experience_bullets_json")
+    @classmethod
+    def validate_experience_bullets(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return value
+        try:
+            bullets = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise ValueError("experience_bullets_json must be valid JSON") from exc
+        if not isinstance(bullets, list):
+            raise ValueError("experience_bullets_json must contain a JSON list")
+        for bullet in bullets:
+            if not isinstance(bullet, dict):
+                raise ValueError("each experience bullet must be an object")
+            if bullet.get("risk_level") not in {"SAFE", "REVIEW", "BLOCKED"}:
+                raise ValueError("invalid experience bullet risk_level")
+        return value
 
 
 # ============================================================
@@ -749,6 +775,15 @@ def follow_up_action(application_id: int, body: FollowUpAction):
 
 # ---------- Resume Tailor ----------
 
+def _run_resume_action(action, *args):
+    from .resume_tailor import ResumeWorkflowError
+    try:
+        return action(*args)
+    except ResumeWorkflowError as exc:
+        raise HTTPException(
+            status_code=exc.status_code, detail=exc.detail
+        ) from exc
+
 @app.get("/api/resume-profiles")
 def list_resume_profiles():
     from .resume_tailor import get_profiles
@@ -771,17 +806,13 @@ def update_resume_profile(profile_id: int, body: dict):
 @app.get("/api/applications/{application_id}/resume-versions")
 def list_resume_versions(application_id: int):
     from .resume_tailor import get_versions
-    return get_versions(application_id)
+    return _run_resume_action(get_versions, application_id)
 
 
 @app.post("/api/applications/{application_id}/resume-tailor", status_code=201)
 def generate_resume(application_id: int):
     from .resume_tailor import tailor_resume
-    result = tailor_resume(application_id)
-    if "error" in result:
-        status = result.get("status", 400)
-        raise HTTPException(status_code=status, detail=result["error"])
-    return result
+    return _run_resume_action(tailor_resume, application_id)
 
 
 @app.get("/api/resume-versions/{version_id}")
@@ -794,18 +825,29 @@ def get_resume_version(version_id: int):
 
 
 @app.patch("/api/resume-versions/{version_id}")
-def update_resume_version(version_id: int, body: dict):
+def update_resume_version(version_id: int, body: ResumeVersionUpdate):
     from .resume_tailor import update_version
-    rv = update_version(version_id, body)
+    rv = _run_resume_action(
+        update_version, version_id, body.model_dump(exclude_unset=True)
+    )
     if not rv:
         raise HTTPException(404, "Version not found")
     return rv
 
 
-@app.post("/api/resume-versions/{version_id}/mark-used")
-def mark_version_used(version_id: int):
-    from .resume_tailor import mark_used
-    rv = mark_used(version_id)
+@app.post("/api/resume-versions/{version_id}/review")
+def review_resume_version(version_id: int):
+    from .resume_tailor import review_version
+    rv = _run_resume_action(review_version, version_id)
+    if not rv:
+        raise HTTPException(404, "Version not found")
+    return rv
+
+
+@app.post("/api/resume-versions/{version_id}/use")
+def use_resume_version(version_id: int):
+    from .resume_tailor import use_version
+    rv = _run_resume_action(use_version, version_id)
     if not rv:
         raise HTTPException(404, "Version not found")
     return rv

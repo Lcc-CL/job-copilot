@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import IntegrityError
 
 # ---- 使用临时 SQLite 数据库（文件模式，确保跨连接共享） ----
 _tmp_db = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
@@ -18,7 +19,7 @@ os.environ["DATABASE_URL"] = f"sqlite:///{_tmp_db.name}"
 from job_copilot.database import get_engine, get_session, init_db
 from job_copilot.models import (
     Base, Job, JobScore, JobVector, Application, ApplicationEvent, SyncRun,
-    APPLICATION_STAGES,
+    ResumeProfile, ResumeVersion, APPLICATION_STAGES,
 )
 from job_copilot.web import app as fastapi_app
 from job_copilot.importer import update_application_stage
@@ -29,6 +30,78 @@ _db_mod._engine = None
 _db_mod._SessionLocal = None
 
 client = TestClient(fastapi_app)
+
+MASTER_RESUME_TEXT = """# 母版简历
+
+具备 Python、FastAPI 和 SQLite 本地 Web 产品交付经验。
+
+- 负责本地优先求职产品的 API 契约、前端交互与数据持久化验证。
+- 使用 TypeScript 构建可维护的 Web 用户界面。
+"""
+
+FULL_JD_TEXT = (
+    "岗位职责：负责本地优先 Web 产品的 Python、FastAPI、SQLite API 开发与交付；"
+    "与 TypeScript 前端协作，确保数据持久化、错误状态和用户操作可审计。"
+    "任职要求：熟悉 Python、FastAPI、SQLite、TypeScript，能够编写定向测试并保障接口契约。"
+    "该岗位强调真实业务证据、稳定交付和本地数据安全。"
+)
+
+
+def _fake_resume_result() -> dict:
+    summary = "具备 Python、FastAPI 和 SQLite 本地 Web 产品交付经验。"
+    bullet = "负责本地优先求职产品的 API 契约、前端交互与数据持久化验证。"
+    return {
+        "tailored_summary": summary,
+        "summary_evidence": [{"claim": summary, "source_text": summary}],
+        "reordered_skills": ["Python", "FastAPI", "SQLite"],
+        "skills_evidence": [
+            {"skill": "Python", "source_text": summary},
+            {"skill": "FastAPI", "source_text": summary},
+            {"skill": "SQLite", "source_text": summary},
+        ],
+        "experience_bullets": [{
+            "original_text": bullet,
+            "tailored_text": bullet,
+            "reason": "保留母版原文，与 JD 直接相关",
+            "evidence_reference": bullet,
+            "risk_level": "SAFE",
+        }],
+        "matched_keywords": ["Python", "FastAPI", "SQLite"],
+        "unsupported_requirements": [],
+        "hard_blockers": [],
+        "warnings": [],
+    }
+
+
+def _seed_resume_application(jd_text: str = FULL_JD_TEXT) -> int:
+    session = get_session()
+    profile = ResumeProfile(
+        name="测试母版简历",
+        content_text=MASTER_RESUME_TEXT,
+        is_master=1,
+        created_at="2026-07-31T00:00:00+00:00",
+        updated_at="2026-07-31T00:00:00+00:00",
+    )
+    job = Job(
+        platform="boss",
+        job_id=f"resume-{abs(hash(jd_text))}",
+        title="Python Web 工程师",
+        company="测试公司",
+        jd_text=jd_text,
+        collected_at="2026-01-01T00:00:00Z",
+    )
+    session.add_all([profile, job])
+    session.commit()
+    application = Application(
+        job_pk=job.id,
+        stage="SHORTLISTED",
+        channel="boss",
+    )
+    session.add(application)
+    session.commit()
+    application_id = application.id
+    session.close()
+    return application_id
 
 
 @pytest.fixture(autouse=True)
@@ -464,7 +537,338 @@ class TestAPICRUD:
 
 
 # ============================================================
-# 7. 现有命令不受影响
+# 7. ResumeVersion 严格状态机
+# ============================================================
+
+class TestResumeWorkflow:
+    def _generate(self, application_id: int) -> dict:
+        with patch(
+            "job_copilot.resume_tailor._llm_tailor",
+            return_value=_fake_resume_result(),
+        ) as fake_llm:
+            response = client.post(
+                f"/api/applications/{application_id}/resume-tailor"
+            )
+        assert response.status_code == 201, response.text
+        fake_llm.assert_called_once()
+        return response.json()
+
+    def test_create_resume_version_is_draft_and_listed(self):
+        application_id = _seed_resume_application()
+        version = self._generate(application_id)
+
+        assert version["status"] == "DRAFT"
+        assert version["created_at"]
+        assert version["reviewed_at"] is None
+        assert version["used_at"] is None
+        assert [e["event_type"] for e in version["status_events"]] == [
+            "resume_created"
+        ]
+
+        listed = client.get(
+            f"/api/applications/{application_id}/resume-versions"
+        )
+        assert listed.status_code == 200
+        assert [row["id"] for row in listed.json()] == [version["id"]]
+
+    def test_draft_to_reviewed_to_used_records_timestamps_and_events(self):
+        application_id = _seed_resume_application()
+        version = self._generate(application_id)
+
+        reviewed = client.post(
+            f"/api/resume-versions/{version['id']}/review"
+        )
+        assert reviewed.status_code == 200, reviewed.text
+        assert reviewed.json()["status"] == "REVIEWED"
+        assert reviewed.json()["reviewed_at"]
+        assert reviewed.json()["used_at"] is None
+
+        used = client.post(f"/api/resume-versions/{version['id']}/use")
+        assert used.status_code == 200, used.text
+        payload = used.json()
+        assert payload["status"] == "USED"
+        assert payload["reviewed_at"]
+        assert payload["used_at"]
+        assert [e["event_type"] for e in payload["status_events"]] == [
+            "resume_created", "resume_reviewed", "resume_used"
+        ]
+        for event in payload["status_events"]:
+            assert event["resume_version_id"] == version["id"]
+            assert event["application_id"] == application_id
+            assert event["to_status"] in {"DRAFT", "REVIEWED", "USED"}
+            assert event["timestamp"]
+
+        refreshed = client.get(f"/api/resume-versions/{version['id']}")
+        assert refreshed.status_code == 200
+        assert refreshed.json()["status"] == "USED"
+        assert refreshed.json()["reviewed_at"] == payload["reviewed_at"]
+        assert refreshed.json()["used_at"] == payload["used_at"]
+
+        session = get_session()
+        stored = session.get(ResumeVersion, version["id"])
+        events = session.query(ApplicationEvent).filter(
+            ApplicationEvent.application_id == application_id,
+            ApplicationEvent.event_type.in_({
+                "resume_created", "resume_reviewed", "resume_used"
+            }),
+        ).order_by(ApplicationEvent.id).all()
+        assert stored.status == "USED"
+        assert [(e.from_stage, e.to_stage) for e in events] == [
+            (None, "DRAFT"),
+            ("DRAFT", "REVIEWED"),
+            ("REVIEWED", "USED"),
+        ]
+        for event in events:
+            audit = json.loads(event.content)
+            assert audit["resume_version_id"] == version["id"]
+            assert audit["application_id"] == application_id
+            assert audit["from_status"] == event.from_stage
+            assert audit["to_status"] == event.to_stage
+            assert audit["timestamp"] == event.occurred_at
+        session.close()
+
+    def test_two_versions_keep_independent_events_and_timestamps(self):
+        application_id = _seed_resume_application()
+        version_a = self._generate(application_id)
+        version_b = self._generate(application_id)
+
+        reviewed_a = client.post(
+            f"/api/resume-versions/{version_a['id']}/review"
+        )
+        assert reviewed_a.status_code == 200
+        used_a = client.post(
+            f"/api/resume-versions/{version_a['id']}/use"
+        )
+        assert used_a.status_code == 200
+
+        untouched_b = client.get(
+            f"/api/resume-versions/{version_b['id']}"
+        ).json()
+        assert untouched_b["status"] == "DRAFT"
+        assert untouched_b["reviewed_at"] is None
+        assert untouched_b["used_at"] is None
+        assert [e["event_type"] for e in untouched_b["status_events"]] == [
+            "resume_created"
+        ]
+        assert all(
+            event["resume_version_id"] == version_b["id"]
+            for event in untouched_b["status_events"]
+        )
+
+        reviewed_b = client.post(
+            f"/api/resume-versions/{version_b['id']}/review"
+        )
+        assert reviewed_b.status_code == 200
+        reviewed_b_payload = reviewed_b.json()
+        assert reviewed_b_payload["reviewed_at"]
+        assert reviewed_b_payload["used_at"] is None
+
+        refreshed_a = client.get(
+            f"/api/resume-versions/{version_a['id']}"
+        ).json()
+        assert refreshed_a["status"] == "USED"
+        assert refreshed_a["reviewed_at"] == reviewed_a.json()["reviewed_at"]
+        assert refreshed_a["used_at"] == used_a.json()["used_at"]
+        assert all(
+            event["resume_version_id"] == version_a["id"]
+            for event in refreshed_a["status_events"]
+        )
+
+    def test_duplicate_review_and_use_do_not_duplicate_events_or_timestamps(self):
+        application_id = _seed_resume_application()
+        version = self._generate(application_id)
+
+        reviewed = client.post(
+            f"/api/resume-versions/{version['id']}/review"
+        )
+        assert reviewed.status_code == 200
+        reviewed_at = reviewed.json()["reviewed_at"]
+
+        duplicate_review = client.post(
+            f"/api/resume-versions/{version['id']}/review"
+        )
+        assert duplicate_review.status_code == 409
+        after_duplicate_review = client.get(
+            f"/api/resume-versions/{version['id']}"
+        ).json()
+        assert after_duplicate_review["reviewed_at"] == reviewed_at
+        assert sum(
+            event["event_type"] == "resume_reviewed"
+            for event in after_duplicate_review["status_events"]
+        ) == 1
+
+        used = client.post(f"/api/resume-versions/{version['id']}/use")
+        assert used.status_code == 200
+        used_at = used.json()["used_at"]
+
+        duplicate_use = client.post(
+            f"/api/resume-versions/{version['id']}/use"
+        )
+        assert duplicate_use.status_code == 409
+        after_duplicate_use = client.get(
+            f"/api/resume-versions/{version['id']}"
+        ).json()
+        assert after_duplicate_use["reviewed_at"] == reviewed_at
+        assert after_duplicate_use["used_at"] == used_at
+        assert sum(
+            event["event_type"] == "resume_used"
+            for event in after_duplicate_use["status_events"]
+        ) == 1
+
+    def test_event_write_failure_rolls_back_status_change(self):
+        application_id = _seed_resume_application()
+        version = self._generate(application_id)
+
+        def add_invalid_event(session, rv, *_args):
+            session.add(ApplicationEvent(
+                application_id=rv.application_id,
+                event_type=None,
+                from_stage="DRAFT",
+                to_stage="REVIEWED",
+                occurred_at="2026-08-01T00:00:00+00:00",
+            ))
+
+        from job_copilot.resume_tailor import review_version
+        with patch(
+            "job_copilot.resume_tailor._add_resume_event",
+            side_effect=add_invalid_event,
+        ):
+            with pytest.raises(IntegrityError):
+                review_version(version["id"])
+
+        session = get_session()
+        stored = session.get(ResumeVersion, version["id"])
+        review_events = session.query(ApplicationEvent).filter(
+            ApplicationEvent.application_id == application_id,
+            ApplicationEvent.event_type == "resume_reviewed",
+        ).count()
+        assert stored.status == "DRAFT"
+        assert review_events == 0
+        session.close()
+
+    def test_draft_cannot_skip_directly_to_used(self):
+        application_id = _seed_resume_application()
+        version = self._generate(application_id)
+
+        response = client.post(f"/api/resume-versions/{version['id']}/use")
+        assert response.status_code == 409
+        assert "DRAFT -> USED" in response.json()["detail"]
+
+    def test_used_cannot_transition_back_to_reviewed(self):
+        application_id = _seed_resume_application()
+        version = self._generate(application_id)
+        assert client.post(
+            f"/api/resume-versions/{version['id']}/review"
+        ).status_code == 200
+        assert client.post(
+            f"/api/resume-versions/{version['id']}/use"
+        ).status_code == 200
+
+        response = client.post(
+            f"/api/resume-versions/{version['id']}/review"
+        )
+        assert response.status_code == 409
+        assert "USED -> REVIEWED" in response.json()["detail"]
+
+    def test_general_patch_cannot_modify_status(self):
+        application_id = _seed_resume_application()
+        version = self._generate(application_id)
+
+        response = client.patch(
+            f"/api/resume-versions/{version['id']}",
+            json={"status": "USED"},
+        )
+        assert response.status_code == 422
+
+        stored = client.get(f"/api/resume-versions/{version['id']}")
+        assert stored.json()["status"] == "DRAFT"
+
+    def test_incomplete_jd_version_cannot_be_reviewed(self):
+        application_id = _seed_resume_application("Python FastAPI 本地 Web 岗位")
+        with patch("job_copilot.resume_tailor._llm_tailor") as llm:
+            generated = client.post(
+                f"/api/applications/{application_id}/resume-tailor"
+            )
+        assert generated.status_code == 201, generated.text
+        assert generated.json()["status"] == "DRAFT"
+        assert generated.json()["generation_method"] == "low_context_rule_based"
+        llm.assert_not_called()
+
+        reviewed = client.post(
+            f"/api/resume-versions/{generated.json()['id']}/review"
+        )
+        assert reviewed.status_code == 422
+        assert "complete JD" in reviewed.json()["detail"]
+
+    def test_generation_rejects_summary_without_evidence(self):
+        application_id = _seed_resume_application()
+        invalid_result = _fake_resume_result()
+        invalid_result["summary_evidence"] = []
+
+        with patch(
+            "job_copilot.resume_tailor._llm_tailor",
+            return_value=invalid_result,
+        ) as fake_llm:
+            response = client.post(
+                f"/api/applications/{application_id}/resume-tailor"
+            )
+        assert response.status_code == 422
+        assert "evidence-backed Summary" in response.json()["detail"]
+        fake_llm.assert_called_once()
+
+        session = get_session()
+        assert session.query(ResumeVersion).count() == 0
+        assert session.query(JobScore).count() == 0
+        assert session.query(JobVector).count() == 0
+        session.close()
+
+    def test_review_rechecks_persisted_evidence(self):
+        application_id = _seed_resume_application()
+        version = self._generate(application_id)
+
+        session = get_session()
+        stored = session.get(ResumeVersion, version["id"])
+        gap = json.loads(stored.gap_analysis_json)
+        gap["evidence"]["skills"] = []
+        stored.skills_json = json.dumps(["Python"], ensure_ascii=False)
+        stored.gap_analysis_json = json.dumps(gap, ensure_ascii=False)
+        session.commit()
+        session.close()
+
+        response = client.post(
+            f"/api/resume-versions/{version['id']}/review"
+        )
+        assert response.status_code == 422
+        assert "Skill lacks" in response.json()["detail"]
+
+    def test_resume_endpoints_return_real_auth_and_not_found_statuses(self):
+        application_id = _seed_resume_application()
+        version = self._generate(application_id)
+
+        with TestClient(fastapi_app) as anonymous_client:
+            assert anonymous_client.post(
+                f"/api/applications/{application_id}/resume-tailor"
+            ).status_code == 401
+            assert anonymous_client.post(
+                f"/api/resume-versions/{version['id']}/review"
+            ).status_code == 401
+            assert anonymous_client.post(
+                f"/api/resume-versions/{version['id']}/use"
+            ).status_code == 401
+
+        assert client.get(
+            "/api/applications/99999/resume-versions"
+        ).status_code == 404
+        assert client.post(
+            "/api/resume-versions/99999/review"
+        ).status_code == 404
+        assert client.post(
+            "/api/resume-versions/99999/use"
+        ).status_code == 404
+
+
+# ============================================================
+# 8. 现有命令不受影响
 # ============================================================
 
 class TestExistingCommandsUnaffected:

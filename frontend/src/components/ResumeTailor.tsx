@@ -1,8 +1,15 @@
 import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
-import { generateResume, fetchResumeVersions, markVersionUsed, updateResumeVersion } from "../api/client";
+import {
+  fetchResumeVersions,
+  generateResume,
+  markResumeVersionUsed,
+  reviewResumeVersion,
+  updateResumeVersion,
+} from "../api/client";
 import { AlertTriangle, Loader2, Check, Copy, Sparkles, ChevronDown, ChevronRight } from "lucide-react";
 import type { ResumeVersion, ExperienceBullet } from "../api/types";
+import { canEditResumeVersion, getResumeWorkflowAction } from "./resumeWorkflow";
 
 interface Props {
   applicationId: number;
@@ -14,11 +21,42 @@ const RISK_COLORS: Record<string, string> = {
   BLOCKED: "var(--danger)",
 };
 
+function parseJsonArray<T>(value: string | null): T[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseJsonObject(value: string | null): Record<string, unknown> {
+  if (!value) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
+}
+
+function formatTimestamp(value: string | null): string {
+  if (!value) return "—";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+}
+
 export default function ResumeTailor({ applicationId }: Props) {
   const { t } = useTranslation();
   const [versions, setVersions] = useState<ResumeVersion[]>([]);
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [transitioningId, setTransitioningId] = useState<number | null>(null);
   const [error, setError] = useState("");
   const [expandedVersion, setExpandedVersion] = useState<number | null>(null);
   const [toast, setToast] = useState("");
@@ -28,10 +66,13 @@ export default function ResumeTailor({ applicationId }: Props) {
 
   async function loadVersions() {
     setLoading(true);
+    setError("");
     try {
       const v = await fetchResumeVersions(applicationId);
       setVersions(v);
-    } catch { setError("Failed to load versions"); }
+    } catch (e: unknown) {
+      setError(errorMessage(e, t("resume.loadFailed")));
+    }
     finally { setLoading(false); }
   }
 
@@ -42,7 +83,7 @@ export default function ResumeTailor({ applicationId }: Props) {
       const rv = await generateResume(applicationId);
       setVersions((prev) => [rv, ...prev]);
       setExpandedVersion(rv.id);
-      setToast("Resume generated");
+      setToast(t("resume.generated"));
       setTimeout(() => setToast(""), 2000);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Generation failed";
@@ -51,40 +92,54 @@ export default function ResumeTailor({ applicationId }: Props) {
     finally { setGenerating(false); }
   }
 
-  async function handleMarkUsed(v: ResumeVersion) {
+  async function handleTransition(v: ResumeVersion) {
+    const action = getResumeWorkflowAction(v.status);
+    if (!action) return;
+    setTransitioningId(v.id);
+    setError("");
     try {
-      await markVersionUsed(v.id);
-      loadVersions();
-      setToast("Marked as used");
+      const updated = action === "review"
+        ? await reviewResumeVersion(v.id)
+        : await markResumeVersionUsed(v.id);
+      setVersions((prev) => prev.map((item) => item.id === updated.id ? updated : item));
+      setToast(action === "review" ? t("resume.reviewed") : t("resume.markedUsed"));
       setTimeout(() => setToast(""), 2000);
-    } catch { setError("Failed to mark"); }
+    } catch (e: unknown) {
+      setError(errorMessage(e, t("resume.transitionFailed")));
+    } finally {
+      setTransitioningId(null);
+    }
   }
 
   async function handleRejectBullet(version: ResumeVersion, idx: number) {
     try {
-      const bullets = JSON.parse(version.experience_bullets_json || "[]");
+      const bullets = parseJsonArray<ExperienceBullet>(version.experience_bullets_json);
       bullets[idx].risk_level = "BLOCKED";
-      await updateResumeVersion(version.id, {
+      const updated = await updateResumeVersion(version.id, {
         experience_bullets_json: JSON.stringify(bullets),
       });
-      loadVersions();
-    } catch { /* ignore */ }
+      setVersions((prev) => prev.map((item) => item.id === updated.id ? updated : item));
+    } catch (e: unknown) {
+      setError(errorMessage(e, t("resume.updateFailed")));
+    }
   }
 
   async function handleAcceptBullet(version: ResumeVersion, idx: number) {
     try {
-      const bullets = JSON.parse(version.experience_bullets_json || "[]");
+      const bullets = parseJsonArray<ExperienceBullet>(version.experience_bullets_json);
       bullets[idx].risk_level = "SAFE";
-      await updateResumeVersion(version.id, {
+      const updated = await updateResumeVersion(version.id, {
         experience_bullets_json: JSON.stringify(bullets),
       });
-      loadVersions();
-    } catch { /* ignore */ }
+      setVersions((prev) => prev.map((item) => item.id === updated.id ? updated : item));
+    } catch (e: unknown) {
+      setError(errorMessage(e, t("resume.updateFailed")));
+    }
   }
 
   const copyText = (text: string) => {
     navigator.clipboard.writeText(text);
-    setToast("Copied");
+    setToast(t("resume.copied"));
     setTimeout(() => setToast(""), 2000);
   };
 
@@ -109,11 +164,11 @@ export default function ResumeTailor({ applicationId }: Props) {
 
       {loading ? (
         <div style={{ padding: 16, textAlign: "center", color: "var(--text-secondary)" }}>
-          <Loader2 size={16} /> Loading versions…
+          <Loader2 size={16} /> {t("resume.loading")}
         </div>
       ) : versions.length === 0 ? (
         <div style={{ padding: 12, fontSize: 12, color: "var(--text-secondary)", textAlign: "center" }}>
-          No resume versions yet. Click "Tailor Resume" to generate.
+          {t("resume.noVersions")}
         </div>
       ) : (
         <div>
@@ -126,10 +181,10 @@ export default function ResumeTailor({ applicationId }: Props) {
                 <div>
                   <span style={{ fontSize: 12, fontWeight: 600 }}>{v.version_name || `Version #${v.id}`}</span>
                   <span className={`badge ${v.status === "USED" ? "badge-green" : v.status === "REVIEWED" ? "badge-blue" : "badge-gray"}`} style={{ marginLeft: 8, fontSize: 10 }}>
-                    {v.status}
+                    {t(`resume.versionStatus.${v.status}`)}
                   </span>
                   {(() => {
-                    const gap = JSON.parse(v.gap_analysis_json || '{}');
+                    const gap = parseJsonObject(v.gap_analysis_json);
                     const isLow = gap.context_quality === 'LOW' || v.generation_method === 'low_context_rule_based';
                     return (
                       <>
@@ -142,15 +197,17 @@ export default function ResumeTailor({ applicationId }: Props) {
                       </>
                     );
                   })()}
-                  <span style={{ fontSize: 10, color: "var(--text-secondary)", marginLeft: 4 }}>
-                    {v.created_at?.slice(0, 10)}
-                  </span>
+                  <div style={{ fontSize: 10, color: "var(--text-secondary)", marginTop: 4 }}>
+                    {t("resume.createdAt")}: {formatTimestamp(v.created_at)} · {t("resume.reviewedAt")}: {formatTimestamp(v.reviewed_at)} · {t("resume.usedAt")}: {formatTimestamp(v.used_at)}
+                  </div>
                 </div>
                 <div style={{ display: "flex", gap: 4 }}>
-                  {v.status !== "USED" && (
+                  {getResumeWorkflowAction(v.status) && (
                     <button className="btn btn-sm" style={{ background: "var(--success-light)", color: "var(--success)", border: "none" }}
-                      onClick={(e) => { e.stopPropagation(); handleMarkUsed(v); }}>
-                      <Check size={12} /> Use
+                      disabled={transitioningId === v.id}
+                      onClick={(e) => { e.stopPropagation(); handleTransition(v); }}>
+                      {transitioningId === v.id ? <Loader2 size={12} /> : <Check size={12} />}
+                      {getResumeWorkflowAction(v.status) === "review" ? t("resume.confirmReview") : t("resume.markUsed")}
                     </button>
                   )}
                   {expandedVersion === v.id ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
@@ -161,7 +218,7 @@ export default function ResumeTailor({ applicationId }: Props) {
                 <div style={{ padding: 12, borderTop: "1px solid var(--border)", fontSize: 12 }}>
                   {/* Rule-based / Low-context notices */}
                   {(() => {
-                    const gap = JSON.parse(v.gap_analysis_json || '{}');
+                    const gap = parseJsonObject(v.gap_analysis_json);
                     const isLow = gap.context_quality === 'LOW' || v.generation_method === 'low_context_rule_based';
                     if (isLow) {
                       return (
@@ -182,7 +239,7 @@ export default function ResumeTailor({ applicationId }: Props) {
                   {/* Summary */}
                   {v.summary_text && (
                     <div style={{ marginBottom: 8 }}>
-                      <strong>Summary:</strong>
+                      <strong>{t("resume.summary")}:</strong>
                       <p style={{ margin: "4px 0", color: "var(--text-secondary)" }}>{v.summary_text}</p>
                     </div>
                   )}
@@ -190,9 +247,9 @@ export default function ResumeTailor({ applicationId }: Props) {
                   {/* Skills */}
                   {v.skills_json && (
                     <div style={{ marginBottom: 8 }}>
-                      <strong>Skills:</strong>
+                      <strong>{t("resume.skills")}:</strong>
                       <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 4 }}>
-                        {JSON.parse(v.skills_json).map((s: string, i: number) => (
+                        {parseJsonArray<string>(v.skills_json).map((s: string, i: number) => (
                           <span key={i} className="badge badge-blue" style={{ fontSize: 10 }}>{s}</span>
                         ))}
                       </div>
@@ -200,10 +257,10 @@ export default function ResumeTailor({ applicationId }: Props) {
                   )}
 
                   {/* Experience Bullets Diff */}
-                  {v.experience_bullets_json && JSON.parse(v.experience_bullets_json).length > 0 && (
+                  {parseJsonArray<ExperienceBullet>(v.experience_bullets_json).length > 0 && (
                     <div style={{ marginBottom: 8 }}>
-                      <strong>Experience Changes:</strong>
-                      {JSON.parse(v.experience_bullets_json).map((b: ExperienceBullet, i: number) => (
+                      <strong>{t("resume.experienceChanges")}:</strong>
+                      {parseJsonArray<ExperienceBullet>(v.experience_bullets_json).map((b: ExperienceBullet, i: number) => (
                         <div key={i} style={{
                           margin: "6px 0", padding: 8, borderRadius: 6,
                           background: b.risk_level === "BLOCKED" ? "var(--danger-light)" :
@@ -214,18 +271,19 @@ export default function ResumeTailor({ applicationId }: Props) {
                             <span className="badge" style={{
                               background: RISK_COLORS[b.risk_level], color: "white", fontSize: 10,
                             }}>{b.risk_level}</span>
-                            {b.risk_level !== "BLOCKED" && (
+                            {canEditResumeVersion(v.status) && b.risk_level !== "BLOCKED" && (
                               <button className="btn btn-sm" style={{ background: "var(--danger-light)", color: "var(--danger)", border: "none", fontSize: 10 }}
-                                onClick={() => handleRejectBullet(v, i)}>Reject</button>
+                                onClick={() => handleRejectBullet(v, i)}>{t("resume.reject")}</button>
                             )}
-                            {b.risk_level === "REVIEW" && (
+                            {canEditResumeVersion(v.status) && b.risk_level === "REVIEW" && (
                               <button className="btn btn-sm" style={{ background: "var(--success-light)", color: "var(--success)", border: "none", fontSize: 10 }}
-                                onClick={() => handleAcceptBullet(v, i)}>Accept</button>
+                                onClick={() => handleAcceptBullet(v, i)}>{t("resume.accept")}</button>
                             )}
                           </div>
-                          <div style={{ marginTop: 4 }}><em>Original:</em> {b.original_text}</div>
-                          <div style={{ color: "var(--primary)" }}><em>Tailored:</em> {b.tailored_text}</div>
-                          <div style={{ color: "var(--text-secondary)", fontSize: 10 }}>{b.reason}</div>
+                          <div style={{ marginTop: 4 }}><em>{t("resume.original")}:</em> {b.original_text}</div>
+                          <div style={{ color: "var(--primary)" }}><em>{t("resume.tailored")}:</em> {b.tailored_text}</div>
+                          <div style={{ color: "var(--text-secondary)", fontSize: 10 }}>{t("resume.reason")}: {b.reason}</div>
+                          <div style={{ color: "var(--text-secondary)", fontSize: 10 }}>{t("resume.evidence")}: {b.evidence_reference || "—"}</div>
                         </div>
                       ))}
                     </div>
@@ -233,14 +291,20 @@ export default function ResumeTailor({ applicationId }: Props) {
 
                   {/* Gap Analysis */}
                   {v.gap_analysis_json && (() => {
-                    const gap = JSON.parse(v.gap_analysis_json);
+                    const gap = parseJsonObject(v.gap_analysis_json);
+                    const unsupported = Array.isArray(gap.unsupported)
+                      ? gap.unsupported.filter((item): item is string => typeof item === "string")
+                      : [];
+                    const warnings = Array.isArray(gap.warnings)
+                      ? gap.warnings.filter((item): item is string => typeof item === "string")
+                      : [];
                     return (
                       <div style={{ marginBottom: 8 }}>
-                        {gap.unsupported?.length > 0 && (
-                          <div style={{ color: "var(--danger)" }}><strong>Unsupported:</strong> {gap.unsupported.join(", ")}</div>
+                        {unsupported.length > 0 && (
+                          <div style={{ color: "var(--danger)" }}><strong>{t("resume.unsupported")}:</strong> {unsupported.join(", ")}</div>
                         )}
-                        {gap.warnings?.length > 0 && (
-                          <div style={{ color: "var(--warning)" }}><strong>Warnings:</strong> {gap.warnings.join("; ")}</div>
+                        {warnings.length > 0 && (
+                          <div style={{ color: "var(--warning)" }}><strong>{t("resume.warnings")}:</strong> {warnings.join("; ")}</div>
                         )}
                       </div>
                     );
@@ -250,9 +314,9 @@ export default function ResumeTailor({ applicationId }: Props) {
                   {v.full_text && (
                     <div>
                       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                        <strong>Full Resume:</strong>
+                        <strong>{t("resume.fullResume")}:</strong>
                         <button className="btn btn-ghost btn-sm" onClick={() => copyText(v.full_text!)}>
-                          <Copy size={12} /> Copy
+                          <Copy size={12} /> {t("resume.copy")}
                         </button>
                       </div>
                       <pre style={{
@@ -268,7 +332,7 @@ export default function ResumeTailor({ applicationId }: Props) {
 
           {versions.length > 1 && (
             <button className="btn btn-ghost btn-sm" onClick={() => setShowVersions(!showVersions)} style={{ width: "100%" }}>
-              {showVersions ? "Show less" : `Show all ${versions.length} versions`}
+              {showVersions ? t("resume.showLess") : t("resume.showAll", { count: versions.length })}
             </button>
           )}
         </div>

@@ -175,9 +175,27 @@ export interface ResumeVersion {
   gap_analysis_json: string | null;
   full_text: string | null;
   generation_method: string | null;
-  status: string;
+  status: "DRAFT" | "REVIEWED" | "USED";
   created_at: string | null;
+  reviewed_at: string | null;
+  used_at: string | null;
   updated_at: string | null;
+  status_events: ResumeStatusEvent[];
+}
+
+export interface ResumeStatusEvent {
+  id: number;
+  event_type: "resume_created" | "resume_reviewed" | "resume_used";
+  resume_version_id: number;
+  application_id: number;
+  from_status: "DRAFT" | "REVIEWED" | null;
+  to_status: "DRAFT" | "REVIEWED" | "USED";
+  timestamp: string | null;
+}
+
+export interface ResumeVersionUpdate {
+  version_name?: string;
+  experience_bullets_json?: string;
 }
 
 export interface FollowUpAction {

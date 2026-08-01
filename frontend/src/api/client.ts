@@ -10,6 +10,7 @@ import type {
   EventCreate,
   FollowUpAction,
   ApplicationEvent,
+  ResumeVersionUpdate,
 } from "./types";
 
 const BASE = "/api";
@@ -33,7 +34,14 @@ export async function request<T>(
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "Unknown error");
-    throw new ApiError(res.status, text || `HTTP ${res.status}`);
+    let message = text || `HTTP ${res.status}`;
+    try {
+      const payload = JSON.parse(text) as { detail?: string };
+      if (typeof payload.detail === "string") message = payload.detail;
+    } catch {
+      // Keep the response body when the server did not return JSON.
+    }
+    throw new ApiError(res.status, message);
   }
   if (res.headers.get("content-type")?.includes("application/json")) {
     return res.json();
@@ -181,12 +189,16 @@ export function fetchResumeVersion(versionId: number): Promise<ResumeVersion> {
   return request<ResumeVersion>(`/resume-versions/${versionId}`);
 }
 
-export function updateResumeVersion(versionId: number, body: Partial<ResumeVersion>): Promise<ResumeVersion> {
+export function updateResumeVersion(versionId: number, body: ResumeVersionUpdate): Promise<ResumeVersion> {
   return request<ResumeVersion>(`/resume-versions/${versionId}`, { method: "PATCH", body: JSON.stringify(body) });
 }
 
-export function markVersionUsed(versionId: number): Promise<ResumeVersion> {
-  return request<ResumeVersion>(`/resume-versions/${versionId}/mark-used`, { method: "POST" });
+export function reviewResumeVersion(versionId: number): Promise<ResumeVersion> {
+  return request<ResumeVersion>(`/resume-versions/${versionId}/review`, { method: "POST" });
+}
+
+export function markResumeVersionUsed(versionId: number): Promise<ResumeVersion> {
+  return request<ResumeVersion>(`/resume-versions/${versionId}/use`, { method: "POST" });
 }
 
 import type { ResumeProfile, ResumeVersion } from "./types";
