@@ -17,7 +17,8 @@ os.environ["DATABASE_URL"] = f"sqlite:///{_tmp_db.name}"
 
 from job_copilot.database import get_engine, get_session, init_db
 from job_copilot.models import (
-    Base, Job, Application, ApplicationEvent, SyncRun, APPLICATION_STAGES,
+    Base, Job, JobScore, JobVector, Application, ApplicationEvent, SyncRun,
+    APPLICATION_STAGES,
 )
 from job_copilot.web import app as fastapi_app
 from job_copilot.importer import update_application_stage
@@ -38,7 +39,14 @@ def _reset_db():
     Base.metadata.create_all(bind=engine)
     from job_copilot.models import run_migrations
     run_migrations(engine)
+    client.cookies.clear()
+    login = client.post(
+        "/api/auth/login",
+        json={"username": "admin", "password": "admin"},
+    )
+    assert login.status_code == 200
     yield
+    client.cookies.clear()
     Base.metadata.drop_all(bind=engine)
 
 
@@ -298,6 +306,92 @@ class TestAPICRUD:
                          json={"recommendation": "APPLY_NOW"})
         assert r.status_code == 200
         assert r.json()["recommendation"] == "APPLY_NOW"
+
+    def test_patch_and_get_full_jd_persists_exactly(self):
+        session = get_session()
+        j = Job(platform="boss", job_id="api-jd", title="JD测试岗", company="测试公司",
+                collected_at="2026-01-01T00:00:00Z")
+        session.add(j); session.commit()
+        jid = j.id
+        session.close()
+
+        jd_text = (
+            "岗位职责：\n"
+            + "负责本地优先求职产品的需求分析、前后端协作与交付质量保障；" * 18
+            + "\n任职要求：具备 Python、TypeScript、SQLite 和 API 契约测试经验。"
+        )
+        assert len(jd_text) > 500
+
+        patched = client.patch(f"/api/jobs/{jid}", json={"jd_text": jd_text})
+        assert patched.status_code == 200
+        assert patched.json()["jd_text"] == jd_text
+        assert patched.json()["jd_status"] == "FULL"
+
+        fetched = client.get(f"/api/jobs/{jid}")
+        assert fetched.status_code == 200
+        assert fetched.json()["jd_text"] == jd_text
+
+        session = get_session()
+        stored = session.get(Job, jid)
+        assert stored is not None
+        assert stored.jd_text == jd_text
+        assert session.query(JobScore).count() == 0
+        assert session.query(JobVector).count() == 0
+        session.close()
+
+    @pytest.mark.parametrize("invalid_jd", [None, "", "   \n\t", "内容太短"])
+    def test_patch_job_rejects_invalid_jd(self, invalid_jd):
+        session = get_session()
+        j = Job(platform="boss", job_id="bad-jd", title="岗", company="司",
+                collected_at="2026-01-01T00:00:00Z", jd_text="原有的有效职位描述内容，长度足够用于验证不会被错误覆盖。")
+        session.add(j); session.commit()
+        jid = j.id
+        original = j.jd_text
+        session.close()
+
+        r = client.patch(f"/api/jobs/{jid}", json={"jd_text": invalid_jd})
+        assert r.status_code == 422
+
+        session = get_session()
+        assert session.get(Job, jid).jd_text == original
+        session.close()
+
+    @pytest.mark.parametrize("alias", ["jd", "description"])
+    def test_patch_job_rejects_unknown_jd_alias(self, alias):
+        session = get_session()
+        j = Job(platform="boss", job_id="bad-alias", title="岗", company="司",
+                collected_at="2026-01-01T00:00:00Z")
+        session.add(j); session.commit()
+        jid = j.id
+        session.close()
+
+        r = client.patch(
+            f"/api/jobs/{jid}",
+            json={alias: "这是一段不应被静默接受为 JD 的长文本。" * 10},
+        )
+        assert r.status_code == 422
+
+    def test_patch_job_not_found(self):
+        r = client.patch(
+            "/api/jobs/99999",
+            json={"jd_text": "这是一段长度足够但对应职位不存在的完整职位描述。" * 5},
+        )
+        assert r.status_code == 404
+
+    def test_patch_job_requires_authentication(self):
+        session = get_session()
+        j = Job(platform="boss", job_id="auth-jd", title="岗", company="司",
+                collected_at="2026-01-01T00:00:00Z")
+        session.add(j); session.commit()
+        jid = j.id
+        session.close()
+
+        with TestClient(fastapi_app) as anonymous_client:
+            r = anonymous_client.patch(
+                f"/api/jobs/{jid}",
+                json={"jd_text": "这是一段长度足够但未认证用户无权保存的完整职位描述。" * 5},
+            )
+        assert r.status_code == 401
 
     def test_create_application(self):
         session = get_session()

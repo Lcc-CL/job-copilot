@@ -6,6 +6,7 @@ import { useNavigate } from "react-router-dom";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import DetailDrawer from "../components/DetailDrawer";
 import { translateStage } from "../i18n/helpers";
+import { resolveDashboardState } from "./dashboardState";
 
 const METRIC_KEYS = ["total_jobs","greeting_ready","contacted","applied","replied","interviews","offers","due_today","overdue"] as const;
 const METRIC_I18N: Record<string, string> = {
@@ -65,10 +66,9 @@ export default function Dashboard() {
     else if (key === "due_today" || key === "overdue") navigate("/follow-ups");
   };
 
-  if (dash.isLoading && fu.isLoading) {
-    return <div className="loading-state"><Loader2 size={24} /> {t("common.loading")}</div>;
-  }
-  if (dash.isError || fu.isError) {
+  const dashboardState = resolveDashboardState(dash, fu);
+
+  if (dashboardState === "error") {
     return (
       <div className="error-state"><AlertTriangle size={24} />
         <p>{t("common.networkError")}</p>
@@ -76,9 +76,15 @@ export default function Dashboard() {
       </div>
     );
   }
+  if (dashboardState === "loading") {
+    return <div className="loading-state"><Loader2 size={24} /> {t("common.loading")}</div>;
+  }
 
-  const d = dash.data!;
-  const f = fu.data!;
+  const d = dash.data;
+  const f = fu.data;
+  if (d === undefined || f === undefined) {
+    return <div className="loading-state"><Loader2 size={24} /> {t("common.loading")}</div>;
+  }
 
   const chartData = STAGE_DATA_KEYS.map((k) => ({
     name: stageLabels[k],

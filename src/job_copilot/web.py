@@ -18,7 +18,7 @@ from fastapi import FastAPI, HTTPException, Query, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select, func, and_, case, text
 from sqlalchemy.orm import Session
 
@@ -96,10 +96,23 @@ app.add_middleware(
 # ============================================================
 
 class JobUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    jd_text: Optional[str] = Field(
+        None,
+        description="完整 JD 原文；至少 20 个非空白字符",
+    )
     jd_status: Optional[str] = None
     recommendation: Optional[str] = None
     greeting_text: Optional[str] = None
     notes: Optional[str] = Field(None, description="用户私人备注")
+
+    @field_validator("jd_text")
+    @classmethod
+    def validate_jd_text(cls, value: Optional[str]) -> str:
+        if value is None or len(value.strip()) < 20:
+            raise ValueError("jd_text must contain at least 20 non-whitespace characters")
+        return value
 
 
 class ApplicationCreate(BaseModel):
@@ -230,7 +243,11 @@ def dashboard_summary():
 
 # ---------- Jobs ----------
 
-def _job_row(j: Job, include_score: bool = True) -> dict:
+def _job_row(
+    j: Job,
+    include_score: bool = True,
+    include_full_jd: bool = False,
+) -> dict:
     d = {
         "id": j.id,
         "platform": j.platform,
@@ -249,7 +266,7 @@ def _job_row(j: Job, include_score: bool = True) -> dict:
         "experience": j.experience,
         "degree": j.degree,
         "tags": j.tags,
-        "jd_text": (j.jd_text or "")[:500],  # 截断，避免响应过大
+        "jd_text": (j.jd_text or "") if include_full_jd else (j.jd_text or "")[:500],
         "jd_status": j.jd_status,
         "original_score": j.original_score,
         "enriched_score": j.enriched_score,
@@ -326,7 +343,7 @@ def get_job(job_id: int):
         j = session.get(Job, job_id)
         if not j:
             raise HTTPException(404, "岗位不存在")
-        return _job_row(j)
+        return _job_row(j, include_full_jd=True)
     finally:
         session.close()
 
@@ -359,7 +376,7 @@ def update_job(job_id: int, body: JobUpdate):
         j.updated_at = _now()
         session.commit()
         session.refresh(j)
-        return _job_row(j)
+        return _job_row(j, include_full_jd=True)
     finally:
         session.close()
 

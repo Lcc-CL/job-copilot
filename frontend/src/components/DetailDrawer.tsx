@@ -43,11 +43,18 @@ export default function DetailDrawer({ applicationId, onClose }: Props) {
 
   async function handleJdSave() {
     if (!data) return;
+    if (jdText.trim().length < 20) {
+      showToast("error", "JD must contain at least 20 non-whitespace characters");
+      return;
+    }
     setJdSaving(true);
     try {
-      await updateJob(data.job_pk, { jd_text: jdText });
-      setJdLen(jdText.length);
+      const updated = await updateJob(data.job_pk, { jd_text: jdText });
+      const savedJd = updated.jd_text || "";
+      setJdText(savedJd);
+      setJdLen(savedJd.length);
       setJdEditing(false);
+      await refetch();
       showToast("success", "JD saved");
     } catch { showToast("error", "Failed to save JD"); }
     finally { setJdSaving(false); }
