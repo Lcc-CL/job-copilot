@@ -139,14 +139,17 @@ def main() -> None:
             p_web = sub.add_parser(name, help=desc)
             p_web.add_argument("action",
                                choices=["init-db", "import-tracking", "serve",
-                                        "hash-password", "export-data", "import-data", "migrate"],
+                                        "hash-password", "reset-password",
+                                        "export-data", "import-data", "migrate"],
                                help="init-db=初始化/迁移数据库; import-tracking=导入投递追踪CSV; "
                                     "serve=启动 API; hash-password=生成密码hash; "
+                                    "reset-password=重置本地单用户密码; "
                                     "export-data/import-data=数据备份/恢复; migrate=运行迁移")
             p_web.add_argument("--csv", help="import-tracking: CSV 路径或目录")
             p_web.add_argument("--host", default="127.0.0.1", help="serve: 绑定地址")
             p_web.add_argument("--port", type=int, default=8000, help="serve: 端口")
             p_web.add_argument("--password", help="hash-password: 明文密码")
+            p_web.add_argument("--username", help="reset-password: 本地用户名（首次配置时使用）")
             p_web.add_argument("--output", help="export-data: 输出文件路径")
             p_web.add_argument("--path", help="import-data: 备份文件路径")
         else:
@@ -215,6 +218,9 @@ def main() -> None:
                 import getpass
                 pw = getpass.getpass("Password: ")
             print(auth.cmd_hash_password(pw))
+        elif args.action == "reset-password":
+            from . import auth
+            print(auth.cmd_reset_password(getattr(args, "username", "") or ""))
         elif args.action == "export-data":
             from . import backup
             output = getattr(args, "output", "data/backups/jobcopilot-backup.json")

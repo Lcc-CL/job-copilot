@@ -3,9 +3,11 @@ import { useNavigate, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "../components/AuthProvider";
 import { ListChecks, Loader2, AlertTriangle, WifiOff } from "lucide-react";
+import { ApiError } from "../api/client";
+import { authErrorTranslationKey } from "../auth/accountAccess";
 
 export default function Login() {
-  const { login, user } = useAuth();
+  const { login, user, authErrorCode } = useAuth();
   const navigate = useNavigate();
   const loc = useLocation();
   const { t } = useTranslation();
@@ -14,9 +16,10 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [offline, setOffline] = useState(false);
+  const routeState = loc.state as { from?: string; reason?: string } | null;
 
   if (user) {
-    const to = (loc.state as { from?: string })?.from || "/";
+    const to = routeState?.from || "/";
     navigate(to, { replace: true });
     return null;
   }
@@ -29,14 +32,18 @@ export default function Login() {
     setOffline(false);
     try {
       await login(username, password);
-      const to = (loc.state as { from?: string })?.from || "/";
+      const to = routeState?.from || "/";
       navigate(to, { replace: true });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Login failed";
       if (msg.includes("NetworkError") || msg.includes("Failed to fetch")) {
         setOffline(true);
+      } else if (err instanceof ApiError) {
+        setError(t(authErrorTranslationKey(err.code, err.status), {
+          defaultValue: err.message,
+        }));
       } else {
-        setError(msg.includes("401") ? t("login.invalidCredentials") : msg);
+        setError(t("login.serverError"));
       }
     } finally {
       setLoading(false);
@@ -67,6 +74,18 @@ export default function Login() {
           }}>
             <WifiOff size={16} color="var(--danger)" />
             {t("login.apiUnavailable")}
+          </div>
+        )}
+
+        {routeState?.reason === "PASSWORD_CHANGED" && (
+          <div className="alert alert-success">
+            {t("login.passwordChanged")}
+          </div>
+        )}
+
+        {!error && authErrorCode === "SESSION_INVALID" && (
+          <div className="alert alert-warning">
+            {t("login.sessionInvalid")}
           </div>
         )}
 

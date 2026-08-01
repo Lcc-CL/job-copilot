@@ -31,8 +31,9 @@ from .models import (
 from .importer import update_application_stage, import_tracking_csv
 from .config import DATA_DIR
 from .auth import (
-    add_session_middleware, register_auth_routes, require_auth,
-    get_auth_config, cmd_hash_password,
+    AuthFailure, add_session_middleware, auth_error_payload,
+    cmd_hash_password, get_account_source_type, register_auth_routes,
+    validate_session_data,
 )
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
@@ -69,9 +70,14 @@ class AuthASGIMiddleware:
             return
 
         session = scope.get("session", {})
-        if not session.get("user"):
+        try:
+            validate_session_data(session)
+        except AuthFailure as failure:
             from starlette.responses import JSONResponse as JsonResp
-            response = JsonResp(status_code=401, content={"detail": "Authentication required"})
+            response = JsonResp(
+                status_code=failure.status_code,
+                content=auth_error_payload(failure),
+            )
             await response(scope, receive, send)
             return
 
@@ -923,7 +929,9 @@ def cmd_serve(host: str = "127.0.0.1", port: int = 8000) -> None:
     """启动 API 服务（SPA fallback 已在模块级别注册）。"""
     import uvicorn
 
-    print(f"Job Copilot API → http://{host}:{port}")
+    print(f"Job Copilot Web → http://{host}:{port}")
+    print(f"登录页面 → http://{host}:{port}/login")
+    print(f"账号来源 → {get_account_source_type()}")
     if os.getenv("APP_ENV") != "production":
         print(f"API 文档 → http://{host}:{port}/docs")
     uvicorn.run(

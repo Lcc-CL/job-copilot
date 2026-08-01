@@ -17,7 +17,7 @@ from sqlalchemy import Engine, inspect, text
 from .models import Base
 
 
-CURRENT_SCHEMA_VERSION = "20260731-01"
+CURRENT_SCHEMA_VERSION = "20260801-01"
 
 
 @dataclass(frozen=True)
@@ -147,8 +147,13 @@ def _align_with_orm(engine: Engine) -> list[str]:
 
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(
-        version=CURRENT_SCHEMA_VERSION,
+        version="20260731-01",
         description="align legacy SQLite schema and add resume tables",
+        upgrade=_align_with_orm,
+    ),
+    Migration(
+        version=CURRENT_SCHEMA_VERSION,
+        description="add local account and account audit tables",
         upgrade=_align_with_orm,
     ),
 )

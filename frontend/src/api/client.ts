@@ -11,16 +11,20 @@ import type {
   FollowUpAction,
   ApplicationEvent,
   ResumeVersionUpdate,
+  AccountDetails,
+  PasswordChangeResult,
 } from "./types";
 
 const BASE = "/api";
 
 class ApiError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  code?: string;
+  constructor(status: number, message: string, code?: string) {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -35,13 +39,20 @@ export async function request<T>(
   if (!res.ok) {
     const text = await res.text().catch(() => "Unknown error");
     let message = text || `HTTP ${res.status}`;
+    let code: string | undefined;
     try {
-      const payload = JSON.parse(text) as { detail?: string };
+      const payload = JSON.parse(text) as {
+        detail?: string | { code?: string; message?: string };
+      };
       if (typeof payload.detail === "string") message = payload.detail;
+      if (payload.detail && typeof payload.detail === "object") {
+        code = payload.detail.code;
+        if (payload.detail.message) message = payload.detail.message;
+      }
     } catch {
       // Keep the response body when the server did not return JSON.
     }
-    throw new ApiError(res.status, message);
+    throw new ApiError(res.status, message, code);
   }
   if (res.headers.get("content-type")?.includes("application/json")) {
     return res.json();
@@ -68,6 +79,32 @@ export function fetchDashboard(): Promise<DashboardSummary> {
 
 export function fetchFollowUps(): Promise<FollowUps> {
   return request<FollowUps>("/follow-ups");
+}
+
+// ---- Account ----
+
+export function fetchAccount(): Promise<AccountDetails> {
+  return request<AccountDetails>("/account");
+}
+
+export function updateAccountUsername(body: {
+  current_password: string;
+  new_username: string;
+}): Promise<AccountDetails> {
+  return request<AccountDetails>("/account/username", {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+
+export function updateAccountPassword(body: {
+  current_password: string;
+  new_password: string;
+}): Promise<PasswordChangeResult> {
+  return request<PasswordChangeResult>("/account/password", {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
 }
 
 // ---- Jobs ----

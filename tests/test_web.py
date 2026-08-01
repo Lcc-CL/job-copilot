@@ -15,14 +15,24 @@ from sqlalchemy.exc import IntegrityError
 _tmp_db = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
 _tmp_db.close()
 os.environ["DATABASE_URL"] = f"sqlite:///{_tmp_db.name}"
+os.environ["APP_ENV"] = "development"
+os.environ["APP_ALLOW_DEV_DEFAULTS"] = "true"
+os.environ["SESSION_SECRET"] = "test-session-secret-at-least-32-characters"
+os.environ.pop("APP_USERNAME", None)
+os.environ.pop("APP_PASSWORD_HASH", None)
 
 from job_copilot.database import get_engine, get_session, init_db
 from job_copilot.models import (
     Base, Job, JobScore, JobVector, Application, ApplicationEvent, SyncRun,
     ResumeProfile, ResumeVersion, APPLICATION_STAGES,
+    LocalAccount, AccountAuditEvent,
 )
 from job_copilot.web import app as fastapi_app
 from job_copilot.importer import update_application_stage
+from job_copilot.auth import (
+    AuthConfig, AuthFailure, cmd_reset_password, hash_password,
+    reset_local_account_password,
+)
 
 # 重置 engine 缓存，使用测试数据库
 import job_copilot.database as _db_mod
@@ -131,7 +141,293 @@ def _cleanup_tmp_db():
 
 
 # ============================================================
-# 1. 数据模型创建
+# 1. 单用户账号与 Session
+# ============================================================
+
+class TestAccountAccess:
+    def test_startup_log_lists_access_login_and_account_source_without_secrets(
+        self,
+        capsys,
+    ):
+        from job_copilot.web import cmd_serve
+
+        with patch("uvicorn.run") as run_server:
+            cmd_serve(host="127.0.0.1", port=8765)
+        run_server.assert_called_once()
+
+        output = capsys.readouterr().out.lower()
+        assert "http://127.0.0.1:8765" in output
+        assert "http://127.0.0.1:8765/login" in output
+        assert "账号来源" in output
+        assert "development_default" in output
+        assert "password" not in output
+        assert "hash" not in output
+
+    def test_production_never_enables_default_admin_account(self):
+        with patch.dict(os.environ, {
+            "APP_ENV": "production",
+            "APP_ALLOW_DEV_DEFAULTS": "true",
+            "SESSION_SECRET": "production-session-secret-at-least-32-chars",
+            "APP_USERNAME": "",
+            "APP_PASSWORD_HASH": "",
+        }, clear=True):
+            config = AuthConfig.from_env()
+        assert config.source_type == "unconfigured"
+        assert config.username == ""
+        assert config.password_hash == ""
+
+    def test_correct_login_and_wrong_password(self):
+        client.cookies.clear()
+
+        wrong = client.post(
+            "/api/auth/login",
+            json={"username": "admin", "password": "wrong-password"},
+        )
+        assert wrong.status_code == 401
+        assert wrong.json()["detail"]["code"] == "INVALID_CREDENTIALS"
+
+        correct = client.post(
+            "/api/auth/login",
+            json={"username": "admin", "password": "admin"},
+        )
+        assert correct.status_code == 200
+        assert correct.json() == {"username": "admin"}
+
+    def test_unconfigured_account_has_distinct_error(self):
+        client.cookies.clear()
+        with patch("job_copilot.auth.resolve_account", return_value=None):
+            response = client.post(
+                "/api/auth/login",
+                json={"username": "someone", "password": "not-a-real-password"},
+            )
+        assert response.status_code == 503
+        assert response.json()["detail"]["code"] == "ACCOUNT_NOT_CONFIGURED"
+
+    def test_login_server_failure_has_distinct_error(self):
+        client.cookies.clear()
+        with patch(
+            "job_copilot.auth.verify_password",
+            side_effect=RuntimeError("simulated verifier failure"),
+        ):
+            response = client.post(
+                "/api/auth/login",
+                json={"username": "admin", "password": "admin"},
+            )
+        assert response.status_code == 500
+        assert response.json()["detail"]["code"] == "AUTH_SERVER_ERROR"
+
+    def test_account_api_requires_auth_and_never_exposes_secrets(self):
+        with TestClient(fastapi_app) as anonymous_client:
+            unauthorized = anonymous_client.get("/api/account")
+        assert unauthorized.status_code == 401
+        assert unauthorized.json()["detail"]["code"] == "AUTH_REQUIRED"
+
+        response = client.get("/api/account")
+        assert response.status_code == 200
+        assert response.json() == {
+            "username": "admin",
+            "source_type": "development_default",
+        }
+        serialized = json.dumps(response.json()).lower()
+        assert "password" not in serialized
+        assert "hash" not in serialized
+
+    def test_change_username_requires_password_and_writes_audit(self):
+        denied = client.patch(
+            "/api/account/username",
+            json={"current_password": "wrong", "new_username": "local-user"},
+        )
+        assert denied.status_code == 403
+        assert denied.json()["detail"]["code"] == "CURRENT_PASSWORD_INVALID"
+
+        changed = client.patch(
+            "/api/account/username",
+            json={"current_password": "admin", "new_username": "local-user"},
+        )
+        assert changed.status_code == 200
+        assert changed.json() == {"username": "local-user", "source_type": "database"}
+        assert client.get("/api/auth/me").json() == {"username": "local-user"}
+
+        client.cookies.clear()
+        old_username = client.post(
+            "/api/auth/login",
+            json={"username": "admin", "password": "admin"},
+        )
+        assert old_username.status_code == 401
+        new_username = client.post(
+            "/api/auth/login",
+            json={"username": "local-user", "password": "admin"},
+        )
+        assert new_username.status_code == 200
+
+        session = get_session()
+        account = session.query(LocalAccount).one()
+        audit = session.query(AccountAuditEvent).one()
+        details = json.loads(audit.details_json)
+        assert account.username == "local-user"
+        assert audit.event_type == "username_changed"
+        assert details["from_username"] == "admin"
+        assert details["to_username"] == "local-user"
+        assert "password" not in audit.details_json.lower()
+        assert "hash" not in audit.details_json.lower()
+        session.close()
+
+    def test_account_update_rolls_back_when_audit_write_fails(self):
+        def add_invalid_audit(session, account, *_args):
+            session.flush()
+            session.add(AccountAuditEvent(
+                account_id=account.id,
+                event_type=None,
+                occurred_at="2026-08-01T00:00:00+00:00",
+            ))
+
+        with patch(
+            "job_copilot.auth._add_audit_event",
+            side_effect=add_invalid_audit,
+        ):
+            response = client.patch(
+                "/api/account/username",
+                json={"current_password": "admin", "new_username": "rolled-back"},
+            )
+        assert response.status_code == 500
+        assert response.json()["detail"]["code"] == "AUTH_SERVER_ERROR"
+
+        session = get_session()
+        assert session.query(LocalAccount).count() == 0
+        assert session.query(AccountAuditEvent).count() == 0
+        session.close()
+        assert client.get("/api/auth/me").json() == {"username": "admin"}
+
+    def test_username_conflict_returns_409(self):
+        session = get_session()
+        now = "2026-08-01T00:00:00+00:00"
+        session.add_all([
+            LocalAccount(
+                username="admin",
+                password_hash=hash_password("admin"),
+                session_version=1,
+                source_type="database",
+                created_at=now,
+                updated_at=now,
+            ),
+            LocalAccount(
+                username="occupied",
+                password_hash=hash_password("unused-password"),
+                session_version=1,
+                source_type="database",
+                created_at=now,
+                updated_at=now,
+            ),
+        ])
+        session.commit()
+        session.close()
+
+        response = client.patch(
+            "/api/account/username",
+            json={"current_password": "admin", "new_username": "occupied"},
+        )
+        assert response.status_code == 409
+        assert response.json()["detail"]["code"] == "USERNAME_CONFLICT"
+
+    def test_change_password_invalidates_old_password_and_all_sessions(self):
+        with TestClient(fastapi_app) as second_client:
+            login = second_client.post(
+                "/api/auth/login",
+                json={"username": "admin", "password": "admin"},
+            )
+            assert login.status_code == 200
+
+            changed = client.patch(
+                "/api/account/password",
+                json={
+                    "current_password": "admin",
+                    "new_password": "new-local-password",
+                },
+            )
+            assert changed.status_code == 200
+            assert changed.json()["reauthentication_required"] is True
+
+            stale = second_client.get("/api/dashboard/summary")
+            assert stale.status_code == 401
+            assert stale.json()["detail"]["code"] == "SESSION_INVALID"
+
+        assert client.get("/api/dashboard/summary").status_code == 401
+        old_password = client.post(
+            "/api/auth/login",
+            json={"username": "admin", "password": "admin"},
+        )
+        assert old_password.status_code == 401
+        new_password = client.post(
+            "/api/auth/login",
+            json={"username": "admin", "password": "new-local-password"},
+        )
+        assert new_password.status_code == 200
+
+        session = get_session()
+        audit = session.query(AccountAuditEvent).one()
+        assert audit.event_type == "password_changed"
+        assert "password_hash" not in audit.details_json.lower()
+        session.close()
+
+    def test_cli_password_reset_creates_database_account_and_invalidates_session(self):
+        result = reset_local_account_password(
+            "cli-reset-password",
+            username="cli-user",
+            engine=get_engine(),
+        )
+        assert result.username == "cli-user"
+        assert result.source_type == "database"
+
+        stale = client.get("/api/dashboard/summary")
+        assert stale.status_code == 401
+        assert stale.json()["detail"]["code"] == "SESSION_INVALID"
+
+        login = client.post(
+            "/api/auth/login",
+            json={"username": "cli-user", "password": "cli-reset-password"},
+        )
+        assert login.status_code == 200
+
+        session = get_session()
+        assert session.query(LocalAccount).count() == 1
+        audit = session.query(AccountAuditEvent).one()
+        assert audit.event_type == "password_reset"
+        assert "cli-reset-password" not in audit.details_json
+        session.close()
+
+    def test_cli_command_reads_password_interactively_without_echoing_it(self):
+        with patch(
+            "getpass.getpass",
+            side_effect=["interactive-password", "interactive-password"],
+        ):
+            message = cmd_reset_password("interactive-user")
+        assert "interactive-user" in message
+        assert "interactive-password" not in message
+
+        session = get_session()
+        account = session.query(LocalAccount).one()
+        assert account.username == "interactive-user"
+        assert account.password_hash != "interactive-password"
+        session.close()
+
+    def test_cli_reset_unknown_database_username_returns_404(self):
+        reset_local_account_password(
+            "initial-password",
+            username="known-user",
+            engine=get_engine(),
+        )
+        with pytest.raises(AuthFailure) as caught:
+            reset_local_account_password(
+                "replacement-password",
+                username="missing-user",
+                engine=get_engine(),
+            )
+        assert caught.value.status_code == 404
+        assert caught.value.code == "ACCOUNT_NOT_FOUND"
+
+
+# ============================================================
+# 2. 数据模型创建
 # ============================================================
 
 class TestModelCreation:
@@ -147,6 +443,8 @@ class TestModelCreation:
         assert "sync_runs" in tables
         assert "resume_profiles" in tables
         assert "resume_versions" in tables
+        assert "local_accounts" in tables
+        assert "account_audit_events" in tables
         assert "schema_version" in tables
 
     def test_job_columns(self):

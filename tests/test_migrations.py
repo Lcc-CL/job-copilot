@@ -22,6 +22,8 @@ REQUIRED_TABLES = {
     "sync_runs",
     "resume_profiles",
     "resume_versions",
+    "local_accounts",
+    "account_audit_events",
     "schema_version",
 }
 
@@ -156,7 +158,7 @@ def test_fresh_database_uses_complete_orm_schema(tmp_path):
     app_columns = {column["name"] for column in inspect(engine).get_columns("applications")}
     assert APPLICATION_COLUMNS.issubset(app_columns)
     assert first.backup_path is None
-    assert first.applied_versions == (CURRENT_SCHEMA_VERSION,)
+    assert first.applied_versions == ("20260731-01", CURRENT_SCHEMA_VERSION)
     assert second.changes == ()
     assert second.applied_versions == ()
     assert second.backup_path is None
@@ -216,7 +218,11 @@ def test_legacy_database_upgrade_is_lossless_and_backed_up(tmp_path):
         versions = {
             row[0] for row in conn.execute(text("SELECT version FROM schema_version"))
         }
-        assert versions == {"20260723-01", CURRENT_SCHEMA_VERSION}
+        assert versions == {
+            "20260723-01",
+            "20260731-01",
+            CURRENT_SCHEMA_VERSION,
+        }
 
     assert report.backup_path is not None
     assert report.backup_path.exists()
@@ -285,6 +291,16 @@ def test_logical_backup_restores_resume_and_schema_version(tmp_path):
                 id, application_id, resume_profile_id, version_name, status
             ) VALUES (1, 1, 1, 'v1', 'DRAFT')
         """))
+        conn.execute(text("""
+            INSERT INTO local_accounts (
+                id, username, password_hash, session_version, source_type
+            ) VALUES (1, 'backup-user', 'test-hash-must-not-export', 1, 'database')
+        """))
+        conn.execute(text("""
+            INSERT INTO account_audit_events (
+                id, account_id, event_type, details_json, occurred_at
+            ) VALUES (1, 1, 'password_changed', '{}', '2026-08-01T00:00:00+00:00')
+        """))
 
     export_path = tmp_path / "backup.json"
     export_message = backup.export_data(str(export_path), engine=source_engine)
@@ -293,7 +309,12 @@ def test_logical_backup_restores_resume_and_schema_version(tmp_path):
     assert "导出完成" in export_message
     assert exported["tables"]["resume_profiles"][0]["name"] == "母版"
     assert exported["tables"]["resume_versions"][0]["version_name"] == "v1"
-    assert exported["tables"]["schema_version"][0]["version"] == CURRENT_SCHEMA_VERSION
+    assert "local_accounts" not in exported["tables"]
+    assert "account_audit_events" not in exported["tables"]
+    assert "test-hash-must-not-export" not in export_path.read_text(encoding="utf-8")
+    assert CURRENT_SCHEMA_VERSION in {
+        row["version"] for row in exported["tables"]["schema_version"]
+    }
 
     restored_path = tmp_path / "restored.db"
     restored_engine = _engine(restored_path)
@@ -305,6 +326,7 @@ def test_logical_backup_restores_resume_and_schema_version(tmp_path):
         assert conn.execute(text("SELECT COUNT(*) FROM applications")).scalar_one() == 1
         assert conn.execute(text("SELECT COUNT(*) FROM resume_profiles")).scalar_one() == 1
         assert conn.execute(text("SELECT COUNT(*) FROM resume_versions")).scalar_one() == 1
+        assert conn.execute(text("SELECT COUNT(*) FROM local_accounts")).scalar_one() == 0
         versions = {
             row[0] for row in conn.execute(text("SELECT version FROM schema_version"))
         }

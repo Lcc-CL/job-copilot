@@ -32,6 +32,18 @@ export interface FollowUps {
   upcoming: ApplicationDetail[];
 }
 
+// ---- Account ----
+
+export interface AccountDetails {
+  username: string;
+  source_type: "database" | "environment" | "development_default" | string;
+}
+
+export interface PasswordChangeResult {
+  status: "ok";
+  reauthentication_required: boolean;
+}
+
 // ---- Job ----
 
 export interface JobScore {

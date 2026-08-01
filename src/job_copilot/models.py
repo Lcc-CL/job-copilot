@@ -33,6 +33,38 @@ class SchemaVersion(Base):
 
 
 # ============================================================
+# 单用户本地账号
+# ============================================================
+
+class LocalAccount(Base):
+    """本地单用户账号；业务层保证只维护一条有效记录。"""
+
+    __tablename__ = "local_accounts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    username: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    password_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    session_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    source_type: Mapped[str] = mapped_column(String, nullable=False, default="database")
+    created_at: Mapped[Optional[str]] = mapped_column(String)
+    updated_at: Mapped[Optional[str]] = mapped_column(String)
+
+
+class AccountAuditEvent(Base):
+    """账号变更审计；details_json 永不包含密码或密码 Hash。"""
+
+    __tablename__ = "account_audit_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    account_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("local_accounts.id", ondelete="CASCADE"), nullable=False
+    )
+    event_type: Mapped[str] = mapped_column(String, nullable=False)
+    details_json: Mapped[Optional[str]] = mapped_column(Text)
+    occurred_at: Mapped[str] = mapped_column(String, nullable=False)
+
+
+# ============================================================
 # 岗位
 # ============================================================
 

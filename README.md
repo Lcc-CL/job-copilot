@@ -34,6 +34,9 @@ PYTHONPATH=src python -m job_copilot status           # 检查配置
 ## Web 前端（投递管理面板）
 
 ```bash
+# 首次使用：交互式创建本地单用户账号（密码不会回显）
+PYTHONPATH=src .venv/bin/python -m job_copilot web reset-password --username <本地用户名>
+
 # 终端 1：启动 API
 PYTHONPATH=src python -m job_copilot web serve
 
@@ -42,6 +45,12 @@ cd frontend
 npm install
 npm run dev          # → http://localhost:5173
 ```
+
+- 登录页：开发服务器使用 `http://localhost:5173/login`；production build 由后端托管时使用 `http://127.0.0.1:8000/login`。
+- 账号来源优先级：本地数据库账号 → `APP_USERNAME` / `APP_PASSWORD_HASH` → 显式开发兼容模式。环境变量名称见 `.env.example`，请通过 shell 或启动器注入；项目不会自动读取 `.env` 文件。
+- 项目不会自动启用 `admin/admin`。如确需兼容旧开发环境，必须设置 `APP_ALLOW_DEV_DEFAULTS=true`，且 production 中始终禁用。
+- 忘记密码时运行 `PYTHONPATH=src .venv/bin/python -m job_copilot web reset-password`；命令会交互式读取新密码，使旧 Session 全部失效，且不会输出密码或 Hash。
+- 登录后可在“设置 → 账号与安全”修改用户名、密码或明确退出登录。
 
 ## 目录结构
 ```

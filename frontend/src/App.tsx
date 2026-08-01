@@ -7,6 +7,7 @@ import Dashboard from "./pages/Dashboard";
 import Applications from "./pages/Applications";
 import JobPool from "./pages/JobPool";
 import FollowUps from "./pages/FollowUps";
+import AccountSettings from "./pages/AccountSettings";
 
 const qc = new QueryClient({
   defaultOptions: {
@@ -29,6 +30,7 @@ export default function App() {
               <Route path="job-pool" element={<JobPool />} />
               <Route path="applications" element={<Applications />} />
               <Route path="follow-ups" element={<FollowUps />} />
+              <Route path="settings/account" element={<AccountSettings />} />
             </Route>
           </Routes>
         </AuthProvider>

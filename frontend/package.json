@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "test:dashboard": "node --test tests/dashboardState.test.ts",
+    "test:account": "node --test tests/accountAccess.test.ts tests/apiClient.test.ts",
     "preview": "vite preview"
   },
   "dependencies": {

@@ -1,5 +1,5 @@
 import { NavLink, Outlet, useLocation } from "react-router-dom";
-import { LayoutDashboard, ListChecks, RefreshCw, Wifi, WifiOff, Database, CalendarCheck, LogOut } from "lucide-react";
+import { LayoutDashboard, ListChecks, RefreshCw, Wifi, WifiOff, Database, CalendarCheck, LogOut, Settings } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
@@ -11,6 +11,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/applications": "Applications",
   "/job-pool": "Job Pool",
   "/follow-ups": "Follow-ups",
+  "/settings/account": "账号与安全",
 };
 
 export default function Layout() {
@@ -60,6 +61,10 @@ export default function Layout() {
           <NavLink to="/follow-ups">
             <CalendarCheck size={16} />
             {t("nav.followUps")}
+          </NavLink>
+          <NavLink to="/settings/account">
+            <Settings size={16} />
+            {t("nav.settings")}
           </NavLink>
         </nav>
         <div style={{ padding: "12px", borderTop: "1px solid var(--border)", fontSize: 12 }}>

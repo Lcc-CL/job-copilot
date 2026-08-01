@@ -392,6 +392,59 @@ table.data-table tr.clickable:hover { background: var(--primary-light); }
   font-family: inherit;
 }
 
+/* ---- Alerts ---- */
+.alert {
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 14px;
+  font-size: 13px;
+}
+
+.alert-error { background: var(--danger-light); color: var(--danger); }
+.alert-warning { background: var(--warning-light); color: var(--warning); }
+.alert-success { background: var(--success-light); color: var(--success); }
+
+/* ---- Account settings ---- */
+.settings-page { max-width: 920px; margin: 0 auto; }
+
+.settings-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.settings-heading h1 { font-size: 22px; margin-bottom: 4px; }
+.settings-heading p, .settings-note { color: var(--text-secondary); font-size: 13px; }
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.settings-grid .section { margin-top: 16px; }
+.settings-grid .section-title { display: flex; align-items: center; gap: 7px; }
+
+.account-current {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.account-current > div { display: flex; flex-direction: column; gap: 4px; }
+.account-current-label { color: var(--text-secondary); font-size: 12px; }
+.account-current .settings-note { grid-column: 1 / -1; }
+
+.sign-out-section {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.loading-state { padding: 40px; text-align: center; color: var(--text-secondary); }
+
 .form-group textarea {
   min-height: 80px;
   resize: vertical;
