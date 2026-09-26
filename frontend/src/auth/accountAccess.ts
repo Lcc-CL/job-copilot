@@ -5,6 +5,7 @@ export function authErrorTranslationKey(
   if (code === "ACCOUNT_NOT_CONFIGURED") return "login.accountNotConfigured";
   if (code === "SESSION_INVALID") return "login.sessionInvalid";
   if (code === "AUTH_SERVER_ERROR") return "login.serverError";
+  if (code === "LOGIN_RATE_LIMITED" || status === 429) return "login.tooManyAttempts";
   if (code === "INVALID_CREDENTIALS" || status === 401) {
     return "login.invalidCredentials";
   }

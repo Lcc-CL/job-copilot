@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import datetime
 import json
+import math
 import os
 import secrets
 import sys
+import threading
+import time
+from collections import deque
 from dataclasses import dataclass
-from typing import MutableMapping, Optional
+from typing import Callable, Deque, Dict, MutableMapping, Optional
 
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -130,11 +134,18 @@ class ResolvedAccount:
 
 
 class AuthFailure(Exception):
-    def __init__(self, status_code: int, code: str, message: str):
+    def __init__(
+        self,
+        status_code: int,
+        code: str,
+        message: str,
+        headers: Optional[dict[str, str]] = None,
+    ):
         super().__init__(message)
         self.status_code = status_code
         self.code = code
         self.message = message
+        self.headers = headers
 
     @property
     def detail(self) -> dict[str, str]:
@@ -142,7 +153,99 @@ class AuthFailure(Exception):
 
 
 def _http_error(failure: AuthFailure) -> HTTPException:
-    return HTTPException(status_code=failure.status_code, detail=failure.detail)
+    return HTTPException(
+        status_code=failure.status_code,
+        detail=failure.detail,
+        headers=failure.headers,
+    )
+
+
+class LoginRateLimiter:
+    """按客户端 IP 统计登录失败次数的滑动窗口限流器。
+
+    状态只保存在进程内存中：单进程 uvicorn 部署足够，重启即清零。
+    窗口内失败次数达到上限后，该 IP 的登录请求在最早一次失败滑出窗口前
+    一律直接拒绝（不再校验密码）；登录成功会清空该 IP 的失败记录。
+    """
+
+    _SWEEP_THRESHOLD = 4096
+
+    def __init__(
+        self,
+        max_failures: int,
+        window_seconds: float,
+        clock: Callable[[], float] = time.monotonic,
+    ):
+        self.max_failures = max(1, max_failures)
+        self.window_seconds = max(1.0, float(window_seconds))
+        self._clock = clock
+        self._failures: Dict[str, Deque[float]] = {}
+        self._lock = threading.Lock()
+
+    def _prune(self, key: str, now: float) -> Optional[Deque[float]]:
+        failures = self._failures.get(key)
+        if failures is None:
+            return None
+        while failures and failures[0] <= now - self.window_seconds:
+            failures.popleft()
+        if not failures:
+            del self._failures[key]
+            return None
+        return failures
+
+    def retry_after(self, key: str) -> int:
+        """返回该 IP 还需等待的秒数；0 表示允许尝试登录。"""
+        with self._lock:
+            now = self._clock()
+            failures = self._prune(key, now)
+            if failures is None or len(failures) < self.max_failures:
+                return 0
+            return max(1, math.ceil(failures[0] + self.window_seconds - now))
+
+    def record_failure(self, key: str) -> None:
+        with self._lock:
+            now = self._clock()
+            if len(self._failures) >= self._SWEEP_THRESHOLD:
+                for stale_key in list(self._failures):
+                    self._prune(stale_key, now)
+            failures = self._failures.setdefault(
+                key, deque(maxlen=self.max_failures)
+            )
+            failures.append(now)
+
+    def reset(self, key: str) -> None:
+        with self._lock:
+            self._failures.pop(key, None)
+
+    @classmethod
+    def from_env(cls) -> "LoginRateLimiter":
+        return cls(
+            max_failures=int(os.getenv("LOGIN_MAX_FAILURES", "5")),
+            window_seconds=float(os.getenv("LOGIN_FAILURE_WINDOW_SECONDS", "900")),
+        )
+
+
+_login_rate_limiter: Optional[LoginRateLimiter] = None
+
+
+def get_login_rate_limiter() -> LoginRateLimiter:
+    global _login_rate_limiter
+    if _login_rate_limiter is None:
+        _login_rate_limiter = LoginRateLimiter.from_env()
+    return _login_rate_limiter
+
+
+def reset_login_rate_limiter() -> None:
+    """测试与显式配置刷新使用：丢弃全部失败记录并重新读取环境变量。"""
+    global _login_rate_limiter
+    _login_rate_limiter = None
+
+
+def _client_ip(request: Request) -> str:
+    # request.client 是 TCP 对端地址；只有在 uvicorn 的 FORWARDED_ALLOW_IPS
+    # 信任了反向代理时才会被改写为 X-Forwarded-For 中的真实客户端，
+    # 因此客户端无法通过伪造请求头绕过限流。
+    return request.client.host if request.client else "unknown"
 
 
 def _server_failure(context: str, error: Exception) -> AuthFailure:
@@ -549,18 +652,31 @@ def register_auth_routes(app) -> None:
 
     @app.post("/api/auth/login")
     async def auth_login(body: LoginBody, request: Request):
+        limiter = get_login_rate_limiter()
+        client_ip = _client_ip(request)
         try:
+            retry_after = limiter.retry_after(client_ip)
+            if retry_after:
+                raise AuthFailure(
+                    429,
+                    "LOGIN_RATE_LIMITED",
+                    "登录失败次数过多，请稍后再试",
+                    headers={"Retry-After": str(retry_after)},
+                )
             account = resolve_account()
             if account is None:
                 raise AuthFailure(503, "ACCOUNT_NOT_CONFIGURED", "本地账号尚未配置")
             if body.username.strip() != account.username:
+                limiter.record_failure(client_ip)
                 raise AuthFailure(401, "INVALID_CREDENTIALS", "用户名或密码错误")
             try:
                 valid = verify_password(body.password, account.password_hash)
             except Exception as error:
                 raise _server_failure("login password verification failed", error) from error
             if not valid:
+                limiter.record_failure(client_ip)
                 raise AuthFailure(401, "INVALID_CREDENTIALS", "用户名或密码错误")
+            limiter.reset(client_ip)
             request.session.clear()
             request.session["user"] = account.username
             request.session["session_version"] = account.session_version

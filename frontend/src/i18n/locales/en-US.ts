@@ -37,6 +37,7 @@ const enUS = {
     signIn: "Sign in",
     signingIn: "Signing in…",
     invalidCredentials: "Invalid credentials",
+    tooManyAttempts: "Too many failed sign-in attempts. Please try again later.",
     accountNotConfigured: "The local account is not configured. Use the CLI password reset command to initialize it.",
     sessionInvalid: "Your session is no longer valid. Sign in again.",
     serverError: "The account service failed. Check the server logs.",
