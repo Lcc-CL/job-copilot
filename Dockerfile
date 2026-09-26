@@ -25,7 +25,9 @@ RUN chmod +x entrypoint.sh
 
 COPY --from=frontend-build /app/frontend/dist ./frontend/dist
 
-RUN useradd --create-home appuser && chown -R appuser:appuser /app
+# /app/data holds the SQLite database when DATABASE_URL is unset; mount a
+# volume there so it survives redeploys.
+RUN mkdir -p /app/data && useradd --create-home appuser && chown -R appuser:appuser /app
 USER appuser
 
 EXPOSE 8080

@@ -1,0 +1,58 @@
+# Production stack — platform-neutral, runs on any host with Docker.
+#
+#   ./scripts/deploy.sh      # fetch, build, start, wait for health
+#   docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+#
+# Database: SQLite on the `data` volume by default. For PostgreSQL either set
+# DATABASE_URL to a managed instance, or enable the bundled one with
+# COMPOSE_PROFILES=postgres (see .env.production.example).
+#
+# Personal data (config/config.toml, resume/) is never baked into the image;
+# it is mounted read-only from this checkout. See docs/deployment.md.
+
+services:
+  app:
+    build: .
+    environment:
+      APP_ENV: production
+      PORT: "8080"
+      DATABASE_URL: ${DATABASE_URL:-}
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET (>= 32 chars) in the env file}
+      SESSION_MAX_AGE_SECONDS: ${SESSION_MAX_AGE_SECONDS:-604800}
+      APP_USERNAME: ${APP_USERNAME:-}
+      APP_PASSWORD_HASH: ${APP_PASSWORD_HASH:-}
+      LLM_MODE: ${LLM_MODE:-dry-run}
+      LOGIN_MAX_FAILURES: ${LOGIN_MAX_FAILURES:-5}
+      LOGIN_FAILURE_WINDOW_SECONDS: ${LOGIN_FAILURE_WINDOW_SECONDS:-900}
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-127.0.0.1}
+    volumes:
+      - data:/app/data
+      - ./config:/app/config:ro
+      - ./resume:/app/resume:ro
+    ports:
+      - "${APP_BIND:-0.0.0.0}:${APP_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+        required: false
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    profiles: [postgres]
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-jobcopilot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+      POSTGRES_DB: ${POSTGRES_DB:-jobcopilot}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-jobcopilot} -d ${POSTGRES_DB:-jobcopilot}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  data:
+  pgdata:

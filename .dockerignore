@@ -30,6 +30,7 @@ config/storage_state*.json
 
 .env
 .env.local
+.env.production
 .claude/settings.local.json
 .DS_Store
 
