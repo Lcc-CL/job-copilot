@@ -51,6 +51,7 @@ npm run dev          # → http://localhost:5173
 - 项目不会自动启用 `admin/admin`。如确需兼容旧开发环境，必须设置 `APP_ALLOW_DEV_DEFAULTS=true`，且 production 中始终禁用。
 - 忘记密码时运行 `PYTHONPATH=src .venv/bin/python -m job_copilot web reset-password`；命令会交互式读取新密码，使旧 Session 全部失效，且不会输出密码或 Hash。
 - 登录后可在“设置 → 账号与安全”修改用户名、密码或明确退出登录。
+- 服务器 / 容器平台部署：见 [docs/deployment.md](docs/deployment.md)（Docker Compose 一键部署，平台无关）。
 
 ## 目录结构
 ```

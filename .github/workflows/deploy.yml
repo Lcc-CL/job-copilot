@@ -1,0 +1,45 @@
+name: Deploy
+
+# Deploys main to your own server over SSH by running scripts/deploy.sh there.
+# Inert until configured: the job is skipped while the DEPLOY_HOST repository
+# variable is empty. Setup: docs/deployment.md → "GitHub Actions 自动部署".
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: vars.DEPLOY_HOST != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Run scripts/deploy.sh on the server
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+          DEPLOY_PORT: ${{ vars.DEPLOY_PORT || '22' }}
+          DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+        run: |
+          set -euo pipefail
+          : "${SSH_KEY:?DEPLOY_SSH_KEY secret is not set}"
+          : "${KNOWN_HOSTS:?DEPLOY_KNOWN_HOSTS secret is not set}"
+          : "${DEPLOY_USER:?DEPLOY_USER variable is not set}"
+          : "${DEPLOY_PATH:?DEPLOY_PATH variable is not set}"
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" -o StrictHostKeyChecking=yes \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "cd $(printf '%q' "$DEPLOY_PATH") && DEPLOY_REF=$GITHUB_SHA ./scripts/deploy.sh"

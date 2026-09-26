@@ -37,8 +37,9 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 
-# ===== Railway 部署 =====
-.railway/
+# ===== 部署 =====
+# 服务器上的生产环境变量（含真实密钥）
+.env.production
 
 # ===== 系统 =====
 .DS_Store

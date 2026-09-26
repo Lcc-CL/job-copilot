@@ -22,10 +22,6 @@ def _default_db_url() -> str:
 def _get_database_url() -> str:
     raw = os.getenv("DATABASE_URL", "").strip()
 
-    # Zeabur: if DATABASE_URL is a literal variable name, resolve it
-    if raw in ("POSTGRES_CONNECTION_STRING", "POSTGRES_URI"):
-        raw = os.getenv(raw, "").strip()
-
     if not raw:
         raw = _default_db_url()
 

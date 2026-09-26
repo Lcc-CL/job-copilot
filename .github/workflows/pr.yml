@@ -1,0 +1,71 @@
+name: PR checks
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest httpx
+      - name: Tests
+        run: |
+          cp config/config.example.toml config/config.toml
+          PYTHONPATH=src python -m pytest -q
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run test:account
+      - run: npm run test:dashboard
+      - run: npm run build
+
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build production image
+        run: docker build -t job-copilot:pr .
+      - name: Smoke test (SQLite, no DATABASE_URL)
+        run: |
+          set -euo pipefail
+          docker run -d --name jc -p 8080:8080 \
+            -e SESSION_SECRET="$(openssl rand -hex 32)" \
+            -v jc-data:/app/data job-copilot:pr
+          for _ in $(seq 1 60); do
+            curl -fsS http://127.0.0.1:8080/api/health && break
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8080/api/health | grep -q '"database":"ok"'
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/api/jobs)" = 401
+          curl -fsS -o /dev/null http://127.0.0.1:8080/login
+          docker exec jc test -f /app/data/jobcopilot.db
+          echo "image OK"
+      - name: Container logs
+        if: always()
+        run: docker logs jc || true
