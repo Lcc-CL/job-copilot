@@ -37,6 +37,7 @@ const zhCN = {
     signIn: "登录",
     signingIn: "登录中…",
     invalidCredentials: "用户名或密码错误",
+    tooManyAttempts: "登录失败次数过多，请稍后再试",
     accountNotConfigured: "本地账号尚未配置，请使用 CLI 重置密码命令完成初始化",
     sessionInvalid: "登录 Session 已失效，请重新登录",
     serverError: "账号服务发生异常，请检查服务端日志",

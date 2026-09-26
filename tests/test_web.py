@@ -31,8 +31,8 @@ from job_copilot.models import (
 from job_copilot.web import app as fastapi_app
 from job_copilot.importer import update_application_stage
 from job_copilot.auth import (
-    AuthConfig, AuthFailure, cmd_reset_password, hash_password,
-    reset_local_account_password,
+    AuthConfig, AuthFailure, LoginRateLimiter, cmd_reset_password,
+    hash_password, reset_local_account_password, reset_login_rate_limiter,
 )
 
 # 重置 engine 缓存，使用测试数据库
@@ -121,6 +121,7 @@ def _reset_db():
     engine = get_engine()
     Base.metadata.drop_all(bind=engine)
     init_db(engine=engine, create_backup=False)
+    reset_login_rate_limiter()
     client.cookies.clear()
     login = client.post(
         "/api/auth/login",
@@ -193,6 +194,104 @@ class TestAccountAccess:
         )
         assert correct.status_code == 200
         assert correct.json() == {"username": "admin"}
+
+    def test_repeated_login_failures_are_rate_limited_per_ip(self):
+        client.cookies.clear()
+        with patch.dict(os.environ, {"LOGIN_MAX_FAILURES": "3"}):
+            reset_login_rate_limiter()
+            for _ in range(3):
+                wrong = client.post(
+                    "/api/auth/login",
+                    json={"username": "admin", "password": "wrong-password"},
+                )
+                assert wrong.status_code == 401
+
+            # 达到上限后即使密码正确也被拒绝，且不再校验密码。
+            with patch("job_copilot.auth.verify_password") as verifier:
+                blocked = client.post(
+                    "/api/auth/login",
+                    json={"username": "admin", "password": "admin"},
+                )
+            verifier.assert_not_called()
+            assert blocked.status_code == 429
+            assert blocked.json()["detail"]["code"] == "LOGIN_RATE_LIMITED"
+            assert 0 < int(blocked.headers["retry-after"]) <= 900
+
+            # 其他 IP 不受影响。
+            with TestClient(fastapi_app, client=("203.0.113.7", 50000)) as other:
+                allowed = other.post(
+                    "/api/auth/login",
+                    json={"username": "admin", "password": "admin"},
+                )
+            assert allowed.status_code == 200
+
+    def test_unknown_username_counts_as_login_failure(self):
+        client.cookies.clear()
+        with patch.dict(os.environ, {"LOGIN_MAX_FAILURES": "2"}):
+            reset_login_rate_limiter()
+            for _ in range(2):
+                wrong = client.post(
+                    "/api/auth/login",
+                    json={"username": "nobody", "password": "whatever"},
+                )
+                assert wrong.status_code == 401
+            blocked = client.post(
+                "/api/auth/login",
+                json={"username": "admin", "password": "admin"},
+            )
+            assert blocked.status_code == 429
+
+    def test_successful_login_resets_failure_count(self):
+        client.cookies.clear()
+        with patch.dict(os.environ, {"LOGIN_MAX_FAILURES": "2"}):
+            reset_login_rate_limiter()
+            for _ in range(2):
+                assert client.post(
+                    "/api/auth/login",
+                    json={"username": "admin", "password": "wrong-password"},
+                ).status_code == 401
+                assert client.post(
+                    "/api/auth/login",
+                    json={"username": "admin", "password": "admin"},
+                ).status_code == 200
+
+    def test_login_rate_limit_window_expires(self):
+        now = [1000.0]
+        limiter = LoginRateLimiter(
+            max_failures=2, window_seconds=60, clock=lambda: now[0]
+        )
+        limiter.record_failure("198.51.100.1")
+        now[0] += 30
+        limiter.record_failure("198.51.100.1")
+        assert limiter.retry_after("198.51.100.1") == 30
+        assert limiter.retry_after("198.51.100.2") == 0
+
+        # 最早一次失败滑出窗口后恢复一次尝试机会。
+        now[0] += 30
+        assert limiter.retry_after("198.51.100.1") == 0
+        limiter.record_failure("198.51.100.1")
+        assert limiter.retry_after("198.51.100.1") == 30
+
+        limiter.reset("198.51.100.1")
+        assert limiter.retry_after("198.51.100.1") == 0
+
+    def test_api_does_not_emit_cors_headers(self):
+        response = client.get(
+            "/api/account",
+            headers={"Origin": "https://evil.example"},
+        )
+        assert response.status_code == 200
+        assert "access-control-allow-origin" not in response.headers
+        assert "access-control-allow-credentials" not in response.headers
+
+        preflight = client.options(
+            "/api/auth/login",
+            headers={
+                "Origin": "https://evil.example",
+                "Access-Control-Request-Method": "POST",
+            },
+        )
+        assert "access-control-allow-origin" not in preflight.headers
 
     def test_unconfigured_account_has_distinct_error(self):
         client.cookies.clear()

@@ -24,6 +24,10 @@ test("login errors distinguish credentials, unconfigured accounts, sessions, and
     authErrorTranslationKey("AUTH_SERVER_ERROR", 500),
     "login.serverError",
   );
+  assert.equal(
+    authErrorTranslationKey("LOGIN_RATE_LIMITED", 429),
+    "login.tooManyAttempts",
+  );
 });
 
 test("password settings reject short and mismatched values", () => {

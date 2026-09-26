@@ -16,7 +16,6 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Query, Depends, Request
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -57,7 +56,8 @@ register_auth_routes(app)
 
 # Auth protection: pure ASGI middleware (before Session so it runs AFTER Session)
 # add_middleware is LIFO: first added = innermost, last = outermost
-# Desired stack: CORS(outer) → Session → Auth(inner) → App
+# Desired stack: Session(outer) → Auth(inner) → App
+# No CORS middleware: the SPA is served from the same origin as the API.
 class AuthASGIMiddleware:
     def __init__(self, app):
         self.app = app
@@ -92,15 +92,6 @@ app.add_middleware(AuthASGIMiddleware)
 
 # Session middleware (after Auth so it runs BEFORE Auth in stack)
 add_session_middleware(app)
-
-# CORS (outermost)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-    allow_credentials=True,
-)
 
 
 # ============================================================
